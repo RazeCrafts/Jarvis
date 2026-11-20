@@ -1,0 +1,8 @@
+node_modules
+dist
+.env
+.venv
+__pycache__
+backend/hermes-home/
+src-tauri/target
+src-tauri/gen

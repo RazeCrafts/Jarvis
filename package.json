@@ -1,0 +1,41 @@
+{
+  "name": "jarvis",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build:runtime": "node tools/build-workspace-runtime.mjs",
+    "predev": "npm run build:runtime",
+    "dev": "vite",
+    "prebuild": "npm run build:runtime",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@fontsource-variable/geist": "^5.1.0",
+    "@fontsource-variable/geist-mono": "^5.1.0",
+    "@react-three/fiber": "^8.17.10",
+    "@tauri-apps/api": "^2.0.0",
+    "framer-motion": "^11.11.0",
+    "lucide-react": "^0.460.0",
+    "prismjs": "^1.29.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "^0.170.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/node": "^22.0.0",
+    "@types/prismjs": "^1.26.4",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/three": "^0.170.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.0.0",
+    "typescript": "~5.6.2",
+    "vite": "^6.0.0"
+  }
+}
