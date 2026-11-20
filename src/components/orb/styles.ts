@@ -1,29 +1,28 @@
 /**
- * Registry of orb visuals. Each style is a fragment shader + scene tuning
- * constants. The shared vertex shader provides:
- *   varying vec3 vViewPos  - view-space position (for fresnel + normals)
- *   varying vec3 vObjPos   - object-space position (for stable surface noise)
- *   varying float vDisp    - vertex displacement (for energy accents)
- * Uniforms available to every fragment shader:
- *   uColor (vec3), uEnergy (float), uTime (float), uAudio (float 0..1)
+ * Registry of JARVIS Core Visualizer engines.
+ * Uniforms provided by JarvisOrb.tsx:
+ *   uColor (vec3), uSecondary (vec3), uEnergy (float), uTime (float), uAudio (float 0..1)
  */
 
-export type OrbStyleId = "core" | "swirl" | "plasma" | "holo";
+export type OrbStyleId =
+  | "reactor"
+  | "neural"
+  | "tesseract"
+  | "plasma"
+  | "holo"
+  | "swirl"
+  | "core";
 
 export interface OrbStyle {
   id: OrbStyleId;
   label: string;
   description: string;
+  geometry: "icosahedron" | "octahedron" | "torusKnot" | "wireShell";
   frag: string;
-  /** Scale of the outer glow shell. */
   glowScale: number;
-  /** Multiplies vertex displacement for this look. */
   dispScale: number;
-  /** CSS background used by the picker card preview. */
   preview: string;
 }
-
-/* ---------- shared GLSL ---------- */
 
 export const NOISE = /* glsl */ `
 vec3 mod289(vec3 x){return x - floor(x*(1.0/289.0))*289.0;}
@@ -87,7 +86,72 @@ float fbm(vec3 p){
 }
 `;
 
-/* ---------- style: core (original) ---------- */
+const REACTOR_FRAG = /* glsl */ `
+uniform vec3 uColor;
+uniform vec3 uSecondary;
+uniform float uEnergy;
+uniform float uTime;
+uniform float uAudio;
+varying vec3 vViewPos;
+varying vec3 vObjPos;
+varying float vDisp;
+void main() {
+  vec3 N = normalize(cross(dFdx(vViewPos), dFdy(vViewPos)));
+  vec3 V = normalize(-vViewPos);
+  float fres = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 1.9);
+  float angle = atan(vObjPos.z, vObjPos.x);
+  float blades = smoothstep(0.35, 0.92, cos(angle * 10.0 + uTime * 1.4));
+  float rings = smoothstep(0.65, 0.98, sin(length(vObjPos.xy) * 18.0 - uTime * 2.2));
+  vec3 base = mix(vec3(0.02, 0.05, 0.10), uColor * 0.45, blades * 0.55);
+  vec3 coreGlow = mix(uColor, uSecondary, rings * 0.4) * (0.45 + uAudio * 0.8 + blades * 0.4);
+  vec3 col = mix(base, coreGlow, clamp(fres * 0.85 + rings * 0.35, 0.0, 1.0)) * uEnergy;
+  col += vec3(0.85, 0.97, 1.0) * pow(fres, 3.0) * (0.4 + uAudio * 0.4);
+  gl_FragColor = vec4(col, 1.0);
+}
+`;
+
+const NEURAL_FRAG = /* glsl */ `
+uniform vec3 uColor;
+uniform vec3 uSecondary;
+uniform float uEnergy;
+uniform float uTime;
+uniform float uAudio;
+varying vec3 vViewPos;
+varying vec3 vObjPos;
+varying float vDisp;
+${NOISE}
+void main() {
+  vec3 N = normalize(cross(dFdx(vViewPos), dFdy(vViewPos)));
+  vec3 V = normalize(-vViewPos);
+  float fres = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 1.6);
+  float net = abs(snoise(vObjPos * 3.8 + vec3(uTime * 0.25)));
+  float synapse = smoothstep(0.18, 0.02, net);
+  vec3 col = vec3(0.02, 0.04, 0.09);
+  col += mix(uColor, uSecondary, 0.35) * synapse * (1.2 + uAudio * 0.9) * uEnergy;
+  col += uColor * fres * 0.65 * uEnergy;
+  gl_FragColor = vec4(col, 1.0);
+}
+`;
+
+const TESSERACT_FRAG = /* glsl */ `
+uniform vec3 uColor;
+uniform vec3 uSecondary;
+uniform float uEnergy;
+uniform float uTime;
+uniform float uAudio;
+varying vec3 vViewPos;
+varying vec3 vObjPos;
+varying float vDisp;
+void main() {
+  vec3 N = normalize(cross(dFdx(vViewPos), dFdy(vViewPos)));
+  vec3 V = normalize(-vViewPos);
+  float fres = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 1.8);
+  float facet = max(dot(N, normalize(vec3(0.5, 0.8, 0.6))), 0.0);
+  vec3 edge = mix(uColor, uSecondary, sin(uTime + vObjPos.y * 3.0) * 0.5 + 0.5);
+  vec3 col = edge * (0.22 + facet * 0.55 + fres * 0.95) * (0.85 + uAudio * 0.5) * uEnergy;
+  gl_FragColor = vec4(col, 1.0);
+}
+`;
 
 const CORE_FRAG = /* glsl */ `
 uniform vec3 uColor;
@@ -107,8 +171,6 @@ void main() {
 }
 `;
 
-/* ---------- style: swirl (gas-giant surface, matches the concept art) ---------- */
-
 const SWIRL_FRAG = /* glsl */ `
 uniform vec3 uColor;
 uniform float uEnergy;
@@ -122,19 +184,15 @@ void main() {
   vec3 N = normalize(cross(dFdx(vViewPos), dFdy(vViewPos)));
   vec3 V = normalize(-vViewPos);
   float fres = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 1.7);
-
-  // Domain-warped, vertically stretched bands -> swirling cloud surface.
   vec3 p = vObjPos;
   vec2 warp = vec2(fbm(p * 1.4 + uTime * 0.06), fbm(p * 1.4 + vec3(4.7) - uTime * 0.04));
   float bands = fbm(vec3(p.x * 1.5, p.y * 4.2, p.z * 1.5) + vec3(warp, 0.0) * 0.9);
   float swirl = smoothstep(-0.55, 0.85, bands + 0.15);
-
   vec3 deep = uColor * 0.16;
   vec3 mid = uColor * 0.75;
   vec3 hot = mix(uColor, vec3(0.75, 0.97, 1.0), 0.55) * 1.35;
   vec3 col = mix(deep, mid, swirl);
   col = mix(col, hot, smoothstep(0.62, 1.0, swirl) * 0.85);
-
   col += uColor * fres * (0.35 + 0.45 * uEnergy);
   float spec = pow(max(dot(N, normalize(vec3(0.4, 0.7, 0.6))), 0.0), 18.0);
   col += vec3(0.85, 0.96, 1.0) * spec * 0.28 * uEnergy;
@@ -142,8 +200,6 @@ void main() {
   gl_FragColor = vec4(col, 1.0);
 }
 `;
-
-/* ---------- style: plasma (turbulent white-hot energy) ---------- */
 
 const PLASMA_FRAG = /* glsl */ `
 uniform vec3 uColor;
@@ -159,11 +215,9 @@ void main() {
   vec3 N = normalize(cross(dFdx(vViewPos), dFdy(vViewPos)));
   vec3 V = normalize(-vViewPos);
   float fres = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 1.5);
-
   float n = fbm(vObjPos * 2.4 + vec3(0.0, -uTime * 0.35, uTime * 0.15));
   float ridge = clamp(1.0 - abs(n) * 1.6, 0.0, 1.0);
   float hot = pow(ridge, 3.0) * (0.75 + uAudio * 0.5);
-
   vec3 col = uColor * 0.10;
   col = mix(col, uColor * 1.5, hot);
   col = mix(col, vec3(0.9, 0.98, 1.0), pow(ridge, 6.0) * 0.9);
@@ -172,8 +226,6 @@ void main() {
   gl_FragColor = vec4(col, 1.0);
 }
 `;
-
-/* ---------- style: holo (scanline hologram shell) ---------- */
 
 const HOLO_FRAG = /* glsl */ `
 uniform vec3 uColor;
@@ -186,13 +238,11 @@ void main() {
   vec3 N = normalize(cross(dFdx(vViewPos), dFdy(vViewPos)));
   vec3 V = normalize(-vViewPos);
   float fres = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 1.6);
-
   float lat = sin(vObjPos.y * 34.0 - uTime * 1.6);
   float scan = smoothstep(0.86, 1.0, lat) * 0.30;
   float lon = sin(atan(vObjPos.z, vObjPos.x) * 22.0);
   float grid = smoothstep(0.90, 1.0, lon) * 0.16;
   float flicker = 0.93 + 0.07 * sin(uTime * 23.0) * sin(uTime * 7.3);
-
   vec3 col = uColor * 0.05;
   col += uColor * (fres * 0.55 + scan + grid) * uEnergy * flicker;
   col += vec3(0.7, 0.95, 1.0) * scan * 0.35 * uEnergy;
@@ -200,23 +250,68 @@ void main() {
 }
 `;
 
-/* ---------- registry ---------- */
-
 export const ORB_STYLES: OrbStyle[] = [
   {
-    id: "core",
-    label: "Core",
-    description: "Dark reactor core with a rim-light pulse. The original.",
-    frag: CORE_FRAG,
-    glowScale: 1.22,
-    dispScale: 1.0,
+    id: "reactor",
+    label: "Arc Reactor",
+    description: "Mark LXXXV segmented palladium turbine core with counter-rotating gimbals.",
+    geometry: "icosahedron",
+    frag: REACTOR_FRAG,
+    glowScale: 1.32,
+    dispScale: 0.45,
     preview:
-      "radial-gradient(circle at 50% 48%, #050d16 0%, #010507 56%, #0a5f78 84%, #00d4ff 102%)",
+      "radial-gradient(circle at 50% 50%, #e0fcff 0%, #22d3ee 32%, #0c4a6e 68%, #040b14 100%)",
+  },
+  {
+    id: "neural",
+    label: "Neural Lattice",
+    description: "Synaptic energy filaments firing dynamically with thinking and speech.",
+    geometry: "wireShell",
+    frag: NEURAL_FRAG,
+    glowScale: 1.28,
+    dispScale: 0.75,
+    preview:
+      "radial-gradient(circle at 42% 38%, #67e8f9 0%, #0284c7 40%, #0a1b33 78%, #030712 100%)",
+  },
+  {
+    id: "tesseract",
+    label: "Cyber Prism",
+    description: "Faceted octahedral quantum prism nested inside dual gyroscopic cages.",
+    geometry: "octahedron",
+    frag: TESSERACT_FRAG,
+    glowScale: 1.24,
+    dispScale: 0.3,
+    preview:
+      "linear-gradient(135deg, #38bdf8 0%, #0f172a 55%, #f59e0b 100%)",
+  },
+  {
+    id: "plasma",
+    label: "Solar Plasma",
+    description: "Turbulent white-hot plasma ridges reacting cleanly to microphone audio.",
+    geometry: "icosahedron",
+    frag: PLASMA_FRAG,
+    glowScale: 1.3,
+    dispScale: 1.35,
+    preview:
+      "radial-gradient(circle at 48% 42%, #eafcff 0%, #58e6ff 28%, #0a6f9e 62%, #021018 100%)",
+  },
+  {
+    id: "holo",
+    label: "Holo Telemetry",
+    description: "Projected scanline globe with Stark meridian coordinates.",
+    geometry: "icosahedron",
+    frag: HOLO_FRAG,
+    glowScale: 1.2,
+    dispScale: 0.55,
+    preview:
+      "repeating-linear-gradient(0deg, rgb(0 212 255 / 0.30) 0 1px, transparent 1px 4px)," +
+      " radial-gradient(circle at 50% 50%, #06283a 0%, #02090f 68%, #0e7ea6 100%)",
   },
   {
     id: "swirl",
-    label: "Swirl",
-    description: "Living gas-giant surface with drifting storm bands.",
+    label: "Vortex Storm",
+    description: "Domain-warped atmospheric fluid currents inside containment.",
+    geometry: "icosahedron",
     frag: SWIRL_FRAG,
     glowScale: 1.34,
     dispScale: 0.85,
@@ -224,25 +319,15 @@ export const ORB_STYLES: OrbStyle[] = [
       "radial-gradient(circle at 36% 30%, #7df0ff 0%, #0891cc 34%, #0a3b66 68%, #041226 100%)",
   },
   {
-    id: "plasma",
-    label: "Plasma",
-    description: "Turbulent energy ball with white-hot ridges. Reacts to voice.",
-    frag: PLASMA_FRAG,
-    glowScale: 1.28,
-    dispScale: 1.45,
+    id: "core",
+    label: "Obsidian Core",
+    description: "Brushed stealth titanium core with razor Fresnel rim highlights.",
+    geometry: "icosahedron",
+    frag: CORE_FRAG,
+    glowScale: 1.22,
+    dispScale: 0.9,
     preview:
-      "radial-gradient(circle at 48% 42%, #eafcff 0%, #58e6ff 28%, #0a6f9e 62%, #021018 100%)",
-  },
-  {
-    id: "holo",
-    label: "Hologram",
-    description: "Projected scanline shell with a meridian grid.",
-    frag: HOLO_FRAG,
-    glowScale: 1.18,
-    dispScale: 0.7,
-    preview:
-      "repeating-linear-gradient(0deg, rgb(0 212 255 / 0.30) 0 1px, transparent 1px 4px)," +
-      " radial-gradient(circle at 50% 50%, #06283a 0%, #02090f 68%, #0e7ea6 100%)",
+      "radial-gradient(circle at 50% 48%, #0f172a 0%, #020617 56%, #0a5f78 84%, #00d4ff 102%)",
   },
 ];
 

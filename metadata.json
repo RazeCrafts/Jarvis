@@ -1,0 +1,6 @@
+{
+  "name": "JARVIS",
+  "description": "Personal AI butler HUD with 40 themes, reactive 3D core, live graphs, video studio, screen vision, smart home control, memory & calendar, and universal plugin support.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -390,12 +390,18 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Default Windows behavior: clicking ✕ closes the app (owner's
-            // explicit Phase 1 decision — no hide-to-tray interception).
-            // When the main window is destroyed, exit the whole app; the
-            // hidden mini player must not keep a zombie process alive.
-            // The Exit path below kills the backend; the kill-on-close Job
-            // Object covers crash paths.
+            // Windows / Desktop minimize-to-tray + floating blob:
+            // Clicking ✕ on the main window hides it cleanly to the system tray and reveals
+            // the floating mini blob window; choosing "Quit" from the tray exits completely.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    if let Some(mini) = window.app_handle().get_webview_window("mini") {
+                        let _ = mini.show();
+                    }
+                }
+            }
             if let WindowEvent::Destroyed { .. } = event {
                 if window.label() == "main" {
                     window.app_handle().exit(0);

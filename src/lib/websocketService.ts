@@ -15,6 +15,16 @@ export interface WsEvent {
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30_000;
 
+function defaultWsUrl(): string {
+  if (typeof window === "undefined") return "ws://127.0.0.1:3000/ws/chat";
+  const stored = localStorage.getItem("jarvis-backend-url");
+  if (stored && stored !== "http://127.0.0.1:8420") {
+    return `${stored.replace(/^http/, "ws").replace(/\/+$/, "")}/ws/chat`;
+  }
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}/ws/chat`;
+}
+
 class WebSocketService {
   private ws: WebSocket | null = null;
   private url: string;
@@ -25,7 +35,7 @@ class WebSocketService {
   private reconnectTimer: number | null = null;
   private closedByUser = false;
 
-  constructor(url = "ws://127.0.0.1:8420/ws/chat") {
+  constructor(url = defaultWsUrl()) {
     this.url = url;
   }
 

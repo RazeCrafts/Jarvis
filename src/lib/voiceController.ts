@@ -1,14 +1,7 @@
 /**
- * Microphone control for the backend voice service (Phase 5).
- *
- * Why this file exists: WebView2's Web Speech recognition is unusable inside
- * Tauri (the session ends instantly) and its microphone permission prompt is
- * never answered, so ``getUserMedia`` hangs. The backend owns the mic
- * (sounddevice + openWakeWord + faster-whisper) and streams events over the
- * WebSocket. This module turns those events into chat/orb state.
- *
- * Every window receives voice events, but only the main window starts a turn
- * from a transcript — otherwise the mini player would send each command twice.
+ * Microphone & browser Web Speech Recognition bridge for JARVIS.
+ * Uses native browser SpeechRecognition when available, and gracefully falls
+ * back to backend/Desktop Bridge voice events when running in Tauri.
  */
 
 import { agentApi } from "@/lib/agentApi";
@@ -41,9 +34,23 @@ export interface MicInfo {
   default: boolean;
 }
 
+interface SpeechRecLike {
+  lang: string;
+  interimResults: boolean;
+  maxAlternatives: number;
+  continuous: boolean;
+  onstart: (() => void) | null;
+  onend: (() => void) | null;
+  onerror: ((e: { error?: string }) => void) | null;
+  onresult: ((e: { results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+
 let started = false;
 let state: VoiceState = "stopped";
 let sendTurn: ((text: string) => void) | null = null;
+let activeRecognition: SpeechRecLike | null = null;
 
 export function isMiniWindow(): boolean {
   return typeof window !== "undefined" && window.location.hash === "#mini";
@@ -59,10 +66,11 @@ function setListeningFlag(next: VoiceState): void {
   if (next !== "listening") setAudioLevel(0);
 }
 
-/** Soft two-tone chime via WebAudio (no assets needed). */
 function playChime(): void {
   try {
-    const Ctx = (window as any).AudioContext ?? (window as any).webkitAudioContext;
+    const Ctx = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext })
+      .AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!Ctx) return;
     const ctx = new Ctx();
     const now = ctx.currentTime;
@@ -75,52 +83,31 @@ function playChime(): void {
       osc.type = "sine";
       osc.frequency.value = freq;
       gain.gain.setValueAtTime(0.0001, now + start);
-      gain.gain.exponentialRampToValueAtTime(0.08, now + start + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + start + 0.22);
+      gain.gain.exponentialRampToValueAtTime(0.06, now + start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + start + 0.2);
       osc.connect(gain).connect(ctx.destination);
       osc.start(now + start);
-      osc.stop(now + start + 0.25);
+      osc.stop(now + start + 0.24);
     }
-    window.setTimeout(() => void ctx.close(), 600);
+    window.setTimeout(() => void ctx.close(), 500);
   } catch {
-    /* audio may be blocked; non-critical */
+    /* audio may be blocked */
   }
 }
 
-async function showMainWindow(): Promise<void> {
-  try {
-    if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
-      const { getCurrentWindow } = await import("@tauri-apps/api/window");
-      const win = getCurrentWindow();
-      await win.show();
-      await win.unminimize();
-      await win.setFocus();
-    }
-  } catch {
-    /* plain browser dev: nothing to show */
-  }
-}
-
-/**
- * Call once per window at startup. `send` starts a chat turn (agentService.send
- * in the main window; unused in the mini player).
- */
 export function initVoiceBridge(send: (text: string) => void): void {
   sendTurn = send;
   if (started) return;
   started = true;
 
-  // While JARVIS speaks, tell the backend to ignore the mic so it does not
-  // transcribe its own voice (there is no echo cancellation yet).
   setTtsStateListener((speaking) => {
     try {
       websocketService.send({ type: "tts_state", speaking });
     } catch {
-      /* offline: backend will simply not know */
+      /* offline */
     }
   });
 
-  // Esc = barge-in: stop speech, cancel listening.
   window.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
     if (useChatStore.getState().isSpeaking) stopSpeaking();
@@ -128,12 +115,8 @@ export function initVoiceBridge(send: (text: string) => void): void {
   });
 }
 
-/* ---------------- events from the backend ---------------- */
-
 export function applyVoiceState(next: string): void {
-  const value = (["idle", "listening", "transcribing", "stopped"] as const).includes(
-    next as VoiceState,
-  )
+  const value = (["idle", "listening", "transcribing", "stopped"] as const).includes(next as VoiceState)
     ? (next as VoiceState)
     : "stopped";
   setListeningFlag(value);
@@ -142,10 +125,9 @@ export function applyVoiceState(next: string): void {
 export function handleWake(source?: string): void {
   playChime();
   if (isMiniWindow()) return;
-  void showMainWindow();
   useChatStore
     .getState()
-    .addMessage("system", source === "ptt" ? "🎙 Listening…" : "🎙 Wake word detected — listening…");
+    .addMessage("system", source === "ptt" ? "Listening…" : "Wake word detected — listening…");
 }
 
 export function handleVoiceLevel(level: number): void {
@@ -155,8 +137,7 @@ export function handleVoiceLevel(level: number): void {
 
 export function handleTranscript(text: string): void {
   const trimmed = (text || "").trim();
-  if (!trimmed) return;
-  if (isMiniWindow()) return; // the main window owns the turn
+  if (!trimmed || isMiniWindow()) return;
   sendTurn?.(trimmed);
 }
 
@@ -169,32 +150,80 @@ export function handleVoiceError(message: string): void {
   useChatStore.getState().addMessage("system", `⚠ ${message}`);
 }
 
-/* ---------------- actions ---------------- */
-
 export async function toggleMic(source: "ptt" | "manual" = "manual"): Promise<void> {
   if (isListening()) {
     await cancelMic();
     return;
   }
-  // Mic press while JARVIS talks is a barge-in.
   if (useChatStore.getState().isSpeaking) stopSpeaking();
+
+  const Rec =
+    typeof window !== "undefined"
+      ? ((window as unknown as { SpeechRecognition?: new () => SpeechRecLike; webkitSpeechRecognition?: new () => SpeechRecLike })
+          .SpeechRecognition ??
+        (window as unknown as { webkitSpeechRecognition?: new () => SpeechRecLike }).webkitSpeechRecognition)
+      : undefined;
+
+  if (Rec) {
+    try {
+      const rec = new Rec();
+      activeRecognition = rec;
+      rec.lang = "en-US";
+      rec.interimResults = false;
+      rec.maxAlternatives = 1;
+      rec.continuous = false;
+      rec.onstart = () => {
+        playChime();
+        setListeningFlag("listening");
+      };
+      rec.onresult = (evt) => {
+        const result = evt.results?.[0];
+        if (result && result[0]?.transcript) {
+          handleTranscript(result[0].transcript);
+        }
+      };
+      rec.onerror = (evt) => {
+        if (evt.error && evt.error !== "no-speech" && evt.error !== "aborted") {
+          handleVoiceError(`Browser speech error: ${evt.error}`);
+        }
+        setListeningFlag("stopped");
+      };
+      rec.onend = () => {
+        activeRecognition = null;
+        setListeningFlag("stopped");
+      };
+      rec.start();
+      return;
+    } catch {
+      activeRecognition = null;
+    }
+  }
+
   try {
     const result = await agentApi.listenVoice(source);
     if (!result.ok) {
-      handleVoiceError(result.error || "The microphone could not be opened.");
+      handleVoiceError(result.error || "Voice recognition is unavailable in this browser.");
+    } else {
+      setListeningFlag("listening");
     }
-  } catch (exc) {
-    handleVoiceError(
-      `Voice backend unreachable (${exc instanceof Error ? exc.message : exc}).`,
-    );
+  } catch {
+    handleVoiceError("Browser voice recognition requires Chrome/Edge or a paired Desktop Bridge.");
   }
 }
 
 export async function cancelMic(): Promise<void> {
+  if (activeRecognition) {
+    try {
+      activeRecognition.stop();
+    } catch {
+      /* ignore */
+    }
+    activeRecognition = null;
+  }
   try {
     await agentApi.cancelVoice();
   } catch {
-    /* backend offline — clear local state anyway */
+    /* ignore */
   }
   setListeningFlag("stopped");
 }
@@ -203,10 +232,7 @@ export async function setWakeWordEnabled(enabled: boolean): Promise<boolean> {
   try {
     await agentApi.saveSettings({ wakeWordEnabled: enabled });
     return true;
-  } catch (exc) {
-    handleVoiceError(
-      `Could not change the wake word (${exc instanceof Error ? exc.message : exc}).`,
-    );
+  } catch {
     return false;
   }
 }

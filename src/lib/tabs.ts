@@ -1,14 +1,12 @@
 import {
   Box,
-  Brain,
-  KeyRound,
-  ListTodo,
-  MonitorCog,
+  CalendarDays,
+  Cpu,
+  Film,
+  Home,
   Orbit,
   Puzzle,
-  RadioTower,
-  Settings,
-  Wrench,
+  SlidersHorizontal,
   type LucideIcon,
 } from "lucide-react";
 import type { TabId } from "@/types";
@@ -16,20 +14,18 @@ import type { TabId } from "@/types";
 export interface TabDef {
   id: TabId;
   label: string;
+  shortLabel: string;
   icon: LucideIcon;
-  /** Which end of the sidebar the tab sits at. */
   position: "top" | "bottom";
 }
 
 export const TABS: TabDef[] = [
-  { id: "home", label: "Assistant", icon: Orbit, position: "top" },
-  { id: "workspace", label: "Workspace", icon: Box, position: "top" },
-  { id: "providers", label: "Providers", icon: KeyRound, position: "top" },
-  { id: "tools", label: "Tools", icon: Wrench, position: "top" },
-  { id: "control", label: "Control", icon: MonitorCog, position: "top" },
-  { id: "tasks", label: "Tasks", icon: ListTodo, position: "top" },
-  { id: "gateway", label: "Gateway", icon: RadioTower, position: "top" },
-  { id: "skills", label: "Skills", icon: Puzzle, position: "top" },
-  { id: "memory", label: "Memory", icon: Brain, position: "top" },
-  { id: "settings", label: "Settings", icon: Settings, position: "bottom" },
+  { id: "home", label: "Command HUD", shortLabel: "HUD", icon: Orbit, position: "top" },
+  { id: "workspace", label: "Workshop", shortLabel: "Workshop", icon: Box, position: "top" },
+  { id: "video", label: "Video Studio", shortLabel: "Video", icon: Film, position: "top" },
+  { id: "smarthome", label: "Smart Home", shortLabel: "Home", icon: Home, position: "top" },
+  { id: "memory", label: "Memory & Cal", shortLabel: "Memory", icon: CalendarDays, position: "top" },
+  { id: "skills", label: "Plugins & Skills", shortLabel: "Plugins", icon: Puzzle, position: "top" },
+  { id: "providers", label: "Models & Bridge", shortLabel: "Models", icon: Cpu, position: "top" },
+  { id: "settings", label: "Customize", shortLabel: "Customize", icon: SlidersHorizontal, position: "bottom" },
 ];

@@ -1,7 +1,6 @@
 /**
- * Agent service — the glue between the WebSocket bridge and the stores.
- * Owns the lifecycle: connect, dispatch events into chat/agent/ui stores,
- * expose send().
+ * Agent service — WebSocket + Store orchestration for chat, live visuals,
+ * citations, artifacts, voice, and server-side personal data sync.
  */
 
 import { agentApi } from "@/lib/agentApi";
@@ -15,9 +14,10 @@ import {
   handleWake,
 } from "@/lib/voiceController";
 import { speak, stopSpeaking } from "@/lib/voiceEngine";
-import { useAgentStore, useChatStore, useUiStore, useWorkspaceStore } from "@/store";
+import { useAgentStore, useChatStore, useHudStore, useLifeStore, useUiStore, useVideoStore, useWorkspaceStore } from "@/store";
 import { websocketService, type ConnectionStatus, type WsEvent } from "@/lib/websocketService";
-import type { TabId } from "@/types";
+import type { LiveVisualSpec, TabId, WebCitation } from "@/types";
+import type { VideoEditDirective } from "@/lib/autoNavigator";
 
 export interface TtsPrefs {
   enabled: boolean;
@@ -43,8 +43,11 @@ export function setTtsPrefs(prefs: TtsPrefs): void {
 
 class AgentService {
   private streamingId: string | null = null;
+  private streamingSessionId: string | null = null;
   private gotTokens = false;
   private sawArtifact = false;
+  private pendingVisuals: LiveVisualSpec[] = [];
+  private pendingCitations: WebCitation[] = [];
   private repaired = new Set<string>();
   private unsubscribe: (() => void) | null = null;
 
@@ -53,12 +56,24 @@ class AgentService {
     this.unsubscribe = websocketService.onMessage((event) => this.handleEvent(event));
     websocketService.onStatus((status) => this.handleStatus(status));
     websocketService.connect();
-    // Warm REST status (also validates the base URL early).
-    agentApi.status().then((status) => {
-      useAgentStore.getState().setCurrentModel(status.model ?? null);
-    }).catch(() => {
-      /* WS status events will drive the dot; offline is fine. */
-    });
+    agentApi
+      .status()
+      .then((status) => {
+        useAgentStore.getState().setCurrentModel(status.model ?? null);
+      })
+      .catch(() => {
+        /* offline tolerance */
+      });
+  }
+
+  private ensureAssistantBubble(targetSessionId?: string): string {
+    const chat = useChatStore.getState();
+    const sid = targetSessionId || this.streamingSessionId || chat.activeSessionId;
+    if (!this.streamingId) {
+      this.streamingId = chat.addMessage("assistant", "", true, sid);
+      this.streamingSessionId = sid;
+    }
+    return this.streamingId;
   }
 
   private handleStatus(status: ConnectionStatus): void {
@@ -69,6 +84,10 @@ class AgentService {
     const chat = useChatStore.getState();
     const agent = useAgentStore.getState();
     const ui = useUiStore.getState();
+    const eventSessionId =
+      typeof event.sessionId === "string" && event.sessionId
+        ? event.sessionId
+        : this.streamingSessionId || chat.activeSessionId;
 
     switch (event.type) {
       case "status": {
@@ -82,22 +101,65 @@ class AgentService {
         break;
       }
 
+      case "visual": {
+        const visual = event.visual as LiveVisualSpec | undefined;
+        if (visual && visual.id) {
+          if (this.streamingId) {
+            chat.attachVisualToMessage(this.streamingId, visual, eventSessionId);
+          } else {
+            this.pendingVisuals.push(visual);
+          }
+        }
+        break;
+      }
+
+      case "citations": {
+        const citations = Array.isArray(event.citations) ? (event.citations as WebCitation[]) : [];
+        if (citations.length > 0) {
+          if (this.streamingId) {
+            chat.attachCitationsToMessage(this.streamingId, citations, eventSessionId);
+          } else {
+            this.pendingCitations = citations;
+          }
+        }
+        break;
+      }
+
+      case "data_sync": {
+        const domain = String(event.domain || "");
+        if (
+          domain === "memories" ||
+          domain === "notes" ||
+          domain === "calendar" ||
+          domain === "smarthome" ||
+          domain === "media"
+        ) {
+          void useLifeStore.getState().refreshDomain(domain);
+        }
+        break;
+      }
+
       case "token": {
         if (!this.gotTokens) {
           this.gotTokens = true;
-          // First token arrives: thinking is over even if the flag lags.
           agent.setThinking(false);
         }
-        if (!this.streamingId) {
-          this.streamingId = chat.addMessage("assistant", "", true);
+        const id = this.ensureAssistantBubble(eventSessionId);
+        if (this.pendingVisuals.length > 0) {
+          for (const v of this.pendingVisuals) chat.attachVisualToMessage(id, v, eventSessionId);
+          this.pendingVisuals = [];
         }
-        chat.appendToMessage(this.streamingId, String(event.content ?? ""));
+        if (this.pendingCitations.length > 0) {
+          chat.attachCitationsToMessage(id, this.pendingCitations, eventSessionId);
+          this.pendingCitations = [];
+        }
+        chat.appendToMessage(id, String(event.content ?? ""), eventSessionId);
         break;
       }
 
       case "tool_call": {
         const tool = String(event.tool ?? "tool");
-        chat.addMessage("system", `⚙ ${tool}`);
+        chat.addMessage("system", `Running ${tool.replace(/_/g, " ")}`, false, eventSessionId);
         break;
       }
 
@@ -111,11 +173,10 @@ class AgentService {
       }
 
       case "notice": {
-        chat.addMessage("system", String(event.message ?? ""));
+        chat.addMessage("system", String(event.message ?? ""), false, eventSessionId);
         break;
       }
 
-      // ---- Workspace artifacts (Phase 6) ----
       case "artifact": {
         const artifact = event.artifact as Artifact | undefined;
         if (artifact && artifact.id) {
@@ -125,7 +186,6 @@ class AgentService {
         break;
       }
 
-      // ---- Backend voice service (Phase 5) ----
       case "voice_state": {
         applyVoiceState(String(event.state ?? "stopped"));
         break;
@@ -157,7 +217,7 @@ class AgentService {
       }
 
       case "stop_speaking": {
-        if (chat.isSpeaking) chat.addMessage("system", "🛑 Stopped.");
+        if (chat.isSpeaking) chat.addMessage("system", "Speech paused.", false, eventSessionId);
         stopSpeaking();
         break;
       }
@@ -165,10 +225,15 @@ class AgentService {
       case "action": {
         const data = (event.data as Record<string, unknown>) ?? {};
         if (data.ok === false && data.error) {
-          chat.addMessage("system", `⚠ ${String(data.error)}`);
+          chat.addMessage("system", `⚠ ${String(data.error)}`, false, eventSessionId);
         }
         if (data.action === "navigate" && typeof data.tab === "string") {
-          ui.setActiveTab(data.tab as TabId);
+          if (useHudStore.getState().autoSwitchTabs) {
+            ui.setActiveTab(data.tab as TabId);
+          }
+          if (data.videoEdit && typeof data.videoEdit === "object") {
+            useVideoStore.getState().applyAutoEditDirective(data.videoEdit as VideoEditDirective);
+          }
         }
         if (data.action === "stage_control" && typeof data.command === "string") {
           window.dispatchEvent(new CustomEvent("jarvis-stage-command", { detail: data.command }));
@@ -178,29 +243,38 @@ class AgentService {
 
       case "error": {
         if (this.streamingId && !this.gotTokens) {
-          chat.removeMessage(this.streamingId);
+          chat.removeMessage(this.streamingId, eventSessionId);
         }
-        chat.addMessage("system", `⚠ ${String(event.message ?? "Unknown error")}`);
+        chat.addMessage("system", `⚠ ${String(event.message ?? "Unknown error")}`, false, eventSessionId);
         this.resetTurn();
         break;
       }
 
       case "done": {
         if (this.streamingId) {
-          if (!this.gotTokens) {
-            // Stream ended without any tokens: drop the empty bubble.
-            chat.removeMessage(this.streamingId);
+          if (!this.gotTokens && this.pendingVisuals.length === 0) {
+            chat.removeMessage(this.streamingId, eventSessionId);
           } else {
-            chat.finishMessage(this.streamingId);
+            if (this.pendingVisuals.length > 0) {
+              for (const v of this.pendingVisuals) chat.attachVisualToMessage(this.streamingId, v, eventSessionId);
+              this.pendingVisuals = [];
+            }
+            if (this.pendingCitations.length > 0) {
+              chat.attachCitationsToMessage(this.streamingId, this.pendingCitations, eventSessionId);
+              this.pendingCitations = [];
+            }
+            chat.finishMessage(this.streamingId, eventSessionId);
           }
+        } else if (this.pendingVisuals.length > 0) {
+          const id = chat.addMessage("assistant", "", false, eventSessionId);
+          for (const v of this.pendingVisuals) chat.attachVisualToMessage(id, v, eventSessionId);
+          this.pendingVisuals = [];
         }
+
         const full = String(event.fullResponse ?? "");
         this.resetTurn();
 
-        // Anything JARVIS coded in this reply becomes a Workspace artifact.
-        // Backend workspace turns already sent an `artifact` event — don't
-        // duplicate them as local (non-editable) artifacts.
-        if (!this.sawArtifact) {
+        if (!this.sawArtifact && full) {
           const artifacts = parseArtifacts(full);
           if (artifacts.length > 0) {
             useWorkspaceStore.getState().addArtifacts(artifacts);
@@ -219,31 +293,40 @@ class AgentService {
 
   private resetTurn(): void {
     this.streamingId = null;
+    this.streamingSessionId = null;
     this.gotTokens = false;
+    this.pendingVisuals = [];
+    this.pendingCitations = [];
     useAgentStore.getState().setThinking(false);
   }
 
-  /** Send a user message through the bridge. `model` is an optional per-message
-   * override from the chat model picker ("" / undefined = backend default). */
   send(text: string, model?: string): void {
     const trimmed = text.trim();
     if (!trimmed) return;
-    stopSpeaking(); // barge-in
-    useChatStore.getState().addMessage("user", trimmed);
+    stopSpeaking();
+    const chat = useChatStore.getState();
+    const sessionId = chat.activeSessionId;
+    const recentHistory = chat.messages
+      .filter((m) => (m.role === "user" || m.role === "assistant") && m.content.trim())
+      .slice(-20)
+      .map((m) => ({ role: m.role, content: m.content }));
+
+    chat.addMessage("user", trimmed, false, sessionId);
     this.streamingId = null;
+    this.streamingSessionId = sessionId;
     this.gotTokens = false;
     this.sawArtifact = false;
+    this.pendingVisuals = [];
+    this.pendingCitations = [];
     websocketService.send({
       type: "message",
+      sessionId,
+      history: recentHistory,
       content: trimmed,
       ...(model ? { model } : {}),
     });
   }
 
-  /**
-   * A rendered artifact crashed inside the iframe. Ask the backend for one
-   * repair turn per artifact version (the backend also rate-limits this).
-   */
   reportWorkspaceError(artifactId: string, version: number, error: string): void {
     const key = `${artifactId}:${version}`;
     if (this.repaired.has(key)) return;

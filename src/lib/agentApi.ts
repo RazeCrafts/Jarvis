@@ -1,18 +1,23 @@
 /**
- * REST client for the JARVIS backend (Memory, Skills, Settings tabs).
- * Base URL is overridable via localStorage `jarvis-backend-url` so the
- * backend address is never hardcoded into the UI logic.
+ * REST client for the JARVIS runtime server.
  */
 
-const DEFAULT_BASE = "http://127.0.0.1:8420";
+const DEFAULT_BASE = "";
 
 export function backendBaseUrl(): string {
   if (typeof localStorage === "undefined") return DEFAULT_BASE;
-  return localStorage.getItem("jarvis-backend-url") || DEFAULT_BASE;
+  const stored = localStorage.getItem("jarvis-backend-url");
+  if (!stored || stored === "http://127.0.0.1:8420") return DEFAULT_BASE;
+  return stored;
 }
 
 export function setBackendBaseUrl(url: string): void {
-  localStorage.setItem("jarvis-backend-url", url.replace(/\/+$/, ""));
+  const cleaned = url.trim().replace(/\/+$/, "");
+  if (!cleaned) {
+    localStorage.removeItem("jarvis-backend-url");
+  } else {
+    localStorage.setItem("jarvis-backend-url", cleaned);
+  }
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -36,6 +41,187 @@ export interface MemoryItem {
   path: string;
   updatedAt: number;
   size: number;
+}
+
+export interface PersonalMemoryItem {
+  id: string;
+  category: "preference" | "person" | "project" | "fact" | "routine";
+  title: string;
+  content: string;
+  pinned: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PersonalNoteItem {
+  id: string;
+  title: string;
+  body: string;
+  tags: string[];
+  updatedAt: number;
+}
+
+export interface CalendarEventItem {
+  id: string;
+  title: string;
+  startISO: string;
+  endISO: string;
+  location?: string;
+  notes?: string;
+  recurrence: "none" | "daily" | "weekly" | "monthly";
+  reminderMinutes: number;
+  completed: boolean;
+}
+
+export interface SmartDeviceItem {
+  id: string;
+  name: string;
+  room: string;
+  type: "light" | "climate" | "lock" | "camera" | "speaker" | "sensor";
+  on: boolean;
+  level?: number;
+  targetTemp?: number;
+  currentTemp?: number;
+  statusText: string;
+}
+
+export interface SmartSceneItem {
+  id: string;
+  name: string;
+  description: string;
+  actions: Array<{ deviceId: string; on: boolean; level?: number; targetTemp?: number }>;
+}
+
+export interface SmartHomeState {
+  homeAssistantUrl: string;
+  homeAssistantConnected: boolean;
+  watchdogArmed?: boolean;
+  devices: SmartDeviceItem[];
+  scenes: SmartSceneItem[];
+}
+
+export interface AutomationRuleItem {
+  id: string;
+  name: string;
+  triggerType: "lock_unlocked_away" | "meeting_approaching" | "motion_detected" | "evening_hour";
+  actionSummary: string;
+  targetSceneId?: string;
+  enabled: boolean;
+  lastTriggeredAt?: number;
+}
+
+export interface SecurityLogEntryItem {
+  id: string;
+  severity: "info" | "alert";
+  source: string;
+  message: string;
+  ts: number;
+}
+
+export interface GatewayMessageItem {
+  id: string;
+  platform: "telegram" | "discord" | "slack" | "whatsapp";
+  sender: string;
+  direction: "inbound" | "outbound";
+  text: string;
+  ts: number;
+}
+
+export interface MediaHistoryItem {
+  id: string;
+  title: string;
+  channel: string;
+  url: string;
+  embedUrl?: string;
+  kind: "video" | "music";
+  addedAt: number;
+}
+
+export interface PersonaConfig {
+  assistantName: string;
+  userTitle: string;
+  witLevel: "dry" | "balanced" | "warm";
+  conciseness: "brief" | "detailed";
+  proactiveMemory: boolean;
+  liveGraphsByDefault: boolean;
+  systemDirectives: string;
+}
+
+export interface HudConfig {
+  themeId: string;
+  customAccent: string;
+  borderRadius: number;
+  compactMode: boolean;
+  visibleWidgets: string[];
+}
+
+export interface NormalizedPluginItem {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  sourceKind: "plugin_yaml" | "skill_md" | "custom_nocode" | "builtin";
+  schemaVersion: number;
+  upstreamUrl: string;
+  pinnedSha?: string;
+  previousVersion?: string;
+  previousRawSource?: string;
+  autoDrafted?: boolean;
+  triggers: string[];
+  providesTools: string[];
+  providesHooks: string[];
+  requiresBridge: boolean;
+  instructions: string;
+  webhookUrl?: string;
+  enabled: boolean;
+  updatedAt: number;
+  rawSource: string;
+  extraSchema: Record<string, unknown>;
+}
+
+export interface PluginDoctorReportItem {
+  ok: boolean;
+  total: number;
+  healthyCount: number;
+  pinnedCount: number;
+  issues: Array<{
+    pluginId: string;
+    pluginName: string;
+    severity: "warn" | "info";
+    message: string;
+  }>;
+}
+
+export interface CatalogPluginItem {
+  id: string;
+  name: string;
+  version: string;
+  category: "Auth & Providers" | "Skills" | "Smart Home" | "Productivity" | "Media";
+  description: string;
+  sourceKind: "plugin_yaml" | "skill_md";
+  requiresBridge: boolean;
+  upstreamUrl: string;
+  rawManifest: string;
+}
+
+export interface AccountConnectorItem {
+  id: string;
+  name: string;
+  providerSlug: string;
+  authMode: "oauth_portal" | "oauth_device" | "local_cli_bridge";
+  connected: boolean;
+  accountLabel: string;
+  lastCheckedAt: number | null;
+  notes: string;
+}
+
+export interface BridgeStatusInfo {
+  connected: boolean;
+  machineName: string | null;
+  platform: string | null;
+  connectedAt: number | null;
+  capabilities: string[];
+  pairingToken: string;
 }
 
 export interface SkillItem {
@@ -78,6 +264,7 @@ export interface AgentSettings {
   provider: string;
   openrouterApiKeyMasked: string;
   hasKey: boolean;
+  hasGeminiBuiltin?: boolean;
   models: { default: string; fast: string; heavy: string };
   confirmDangerousTools: boolean;
   allowedApps: string[];
@@ -97,7 +284,7 @@ export interface ProviderInfo {
   label: string;
   description: string;
   authType: string;
-  tab: "keys" | "accounts";
+  tab: "builtin" | "keys" | "accounts";
   envVars: string[];
   baseUrlEnvVar: string;
   signupUrl: string;
@@ -201,35 +388,290 @@ export interface WorkspaceArtifact {
   updatedAt: number;
 }
 
+export interface MicInfo {
+  id: string;
+  name: string;
+  channels: number;
+  default: boolean;
+}
+
 /* ---------------- endpoints ---------------- */
 
 export const agentApi = {
   status: () =>
     request<{
       brain: string;
+      provider?: string;
       initError: string | null;
       model: string | null;
       models: { default: string; fast: string; heavy: string };
       tts: { enabled: boolean; rate: number; pitch: number };
       confirmDangerousTools: boolean;
       hasKey: boolean;
+      hasGeminiBuiltin?: boolean;
     }>("/agent/status"),
 
-  // Memory
+  // Personal Memory, Notes & Calendar
+  getMemories: () => request<{ items: PersonalMemoryItem[] }>("/api/memories"),
+  createMemory: (payload: {
+    category: PersonalMemoryItem["category"];
+    title: string;
+    content: string;
+    pinned?: boolean;
+  }) => request<{ ok: boolean; item: PersonalMemoryItem }>("/api/memories", { method: "POST", body: JSON.stringify(payload) }),
+  updateMemory: (id: string, payload: Partial<Pick<PersonalMemoryItem, "title" | "content" | "pinned">>) =>
+    request<{ ok: boolean; item: PersonalMemoryItem }>(`/api/memories/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  deletePersonalMemory: (id: string) =>
+    request<{ ok: boolean }>(`/api/memories/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  getNotes: () => request<{ items: PersonalNoteItem[] }>("/api/notes"),
+  createNote: (payload: { title: string; body: string; tags?: string[] }) =>
+    request<{ ok: boolean; item: PersonalNoteItem }>("/api/notes", { method: "POST", body: JSON.stringify(payload) }),
+  updateNote: (id: string, payload: Partial<Pick<PersonalNoteItem, "title" | "body" | "tags">>) =>
+    request<{ ok: boolean; item: PersonalNoteItem }>(`/api/notes/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  deleteNote: (id: string) =>
+    request<{ ok: boolean }>(`/api/notes/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  getCalendar: () => request<{ items: CalendarEventItem[] }>("/api/calendar"),
+  createCalendarEvent: (payload: {
+    title: string;
+    startISO: string;
+    endISO?: string;
+    location?: string;
+    notes?: string;
+    recurrence?: CalendarEventItem["recurrence"];
+    reminderMinutes?: number;
+  }) => request<{ ok: boolean; item: CalendarEventItem }>("/api/calendar", { method: "POST", body: JSON.stringify(payload) }),
+  updateCalendarEvent: (id: string, payload: Partial<CalendarEventItem>) =>
+    request<{ ok: boolean; item: CalendarEventItem }>(`/api/calendar/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  deleteCalendarEvent: (id: string) =>
+    request<{ ok: boolean }>(`/api/calendar/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  calendarIcsUrl: () => `${backendBaseUrl()}/api/calendar/export.ics`,
+
+  // Smart Home & Media Hub
+  getSmartHome: () => request<SmartHomeState>("/api/smarthome"),
+  controlSmartDevice: (id: string, payload: { on?: boolean; level?: number; targetTemp?: number }) =>
+    request<{ ok: boolean; device: SmartDeviceItem }>(`/api/smarthome/device/${encodeURIComponent(id)}`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  activateSmartScene: (id: string) =>
+    request<{ ok: boolean; smartHome: SmartHomeState }>(`/api/smarthome/scene/${encodeURIComponent(id)}`, {
+      method: "POST",
+    }),
+  connectHomeAssistant: (url: string, token: string) =>
+    request<{ ok: boolean; connected: boolean; message: string }>("/api/smarthome/home-assistant", {
+      method: "POST",
+      body: JSON.stringify({ url, token }),
+    }),
+  getMediaHistory: () => request<{ items: MediaHistoryItem[] }>("/api/media"),
+  searchMedia: (query: string, kind: "video" | "music" = "video") =>
+    request<{
+      ok: boolean;
+      results: Array<{ title: string; channel: string; url: string; embedUrl?: string; snippet: string }>;
+      history: MediaHistoryItem[];
+    }>("/api/media/search", { method: "POST", body: JSON.stringify({ query, kind }) }),
+
+  // Persona, HUD & Share Bundle
+  getHudPersona: () => request<{ persona: PersonaConfig; hud: HudConfig }>("/api/hud-persona"),
+  saveHudPersona: (payload: { persona?: Partial<PersonaConfig>; hud?: Partial<HudConfig> }) =>
+    request<{ ok: boolean; persona: PersonaConfig; hud: HudConfig }>("/api/hud-persona", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  exportShareBundle: () => request<Record<string, unknown>>("/api/bundle/export"),
+  importShareBundle: (bundle: Record<string, unknown>) =>
+    request<{ ok: boolean; persona: PersonaConfig; hud: HudConfig; pluginCount: number }>("/api/bundle/import", {
+      method: "POST",
+      body: JSON.stringify(bundle),
+    }),
+
+  // Open Plugin & Skill Compatibility Registry
+  getPlugins: () =>
+    request<{ installed: NormalizedPluginItem[]; catalog: CatalogPluginItem[] }>("/api/plugins"),
+  installCatalogPlugin: (id: string) =>
+    request<{ ok: boolean; plugin: NormalizedPluginItem }>("/api/plugins/install-catalog", {
+      method: "POST",
+      body: JSON.stringify({ id }),
+    }),
+  installPluginUrl: (url: string) =>
+    request<{ ok: boolean; plugin: NormalizedPluginItem }>("/api/plugins/install-url", {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    }),
+  installPluginManifest: (raw: string, filenameHint?: string) =>
+    request<{ ok: boolean; plugin: NormalizedPluginItem }>("/api/plugins/install-manifest", {
+      method: "POST",
+      body: JSON.stringify({ raw, filenameHint }),
+    }),
+  createNoCodeSkill: (payload: {
+    name: string;
+    description: string;
+    triggers: string[];
+    instructions: string;
+    webhookUrl?: string;
+  }) =>
+    request<{ ok: boolean; plugin: NormalizedPluginItem }>("/api/plugins/create-nocode", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  togglePlugin: (id: string, enabled: boolean) =>
+    request<{ ok: boolean; plugin: NormalizedPluginItem }>(`/api/plugins/${encodeURIComponent(id)}/toggle`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    }),
+  deletePlugin: (id: string) =>
+    request<{ ok: boolean }>(`/api/plugins/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  checkPluginUpdates: () =>
+    request<{ ok: boolean; checked: number; updated: string[] }>("/api/plugins/check-updates", {
+      method: "POST",
+    }),
+  rollbackPlugin: (id: string) =>
+    request<{ ok: boolean; plugin: NormalizedPluginItem }>(`/api/plugins/${encodeURIComponent(id)}/rollback`, {
+      method: "POST",
+    }),
+  runPluginDoctor: () => request<PluginDoctorReportItem>("/api/plugins/doctor"),
+  draftWorkflowSkill: (payload: { name: string; description?: string; triggers?: string[]; stepsText: string }) =>
+    request<{ ok: boolean; plugin: NormalizedPluginItem }>("/api/plugins/draft-workflow", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  // Memory Wiki, Proactive Briefing, Watchdog, Automations, Video TTS & Web Extract
+  getMemoryWiki: () =>
+    request<{
+      sections: Array<{
+        id: string;
+        title: string;
+        category: string;
+        summary: string;
+        entries: Array<{
+          id: string;
+          title: string;
+          detail: string;
+          pinned: boolean;
+          tags: string[];
+          sourceType: "memory" | "note";
+          updatedAt: number;
+        }>;
+      }>;
+    }>("/api/memory/wiki"),
+  getBriefing: () =>
+    request<{
+      briefing: {
+        headline: string;
+        period: "morning" | "afternoon" | "evening";
+        securityStatus: string;
+        upcomingCount: number;
+        nextEventTitle: string | null;
+        pinnedFocus: string[];
+        alerts: string[];
+        suggestedPrompt: string;
+      };
+      triggeredAutomations: Array<{ ruleId: string; ruleName: string; message: string; targetSceneId?: string }>;
+    }>("/api/briefing"),
+  getWatchdogState: () =>
+    request<{ watchdogArmed: boolean; securityLog: SecurityLogEntryItem[]; automations: AutomationRuleItem[] }>(
+      "/api/smarthome/watchdog",
+    ),
+  toggleWatchdog: (armed?: boolean) =>
+    request<{ ok: boolean; watchdogArmed: boolean; securityLog: SecurityLogEntryItem[] }>(
+      "/api/smarthome/watchdog/toggle",
+      { method: "POST", body: JSON.stringify(typeof armed === "boolean" ? { armed } : {}) },
+    ),
+  logWatchdogEvent: (payload: { source?: string; message?: string; severity?: "info" | "alert" }) =>
+    request<{ ok: boolean; entry: SecurityLogEntryItem; securityLog: SecurityLogEntryItem[] }>(
+      "/api/smarthome/watchdog/event",
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+  createAutomation: (payload: {
+    name: string;
+    triggerType: AutomationRuleItem["triggerType"];
+    actionSummary: string;
+    targetSceneId?: string;
+  }) => request<{ ok: boolean; item: AutomationRuleItem }>("/api/automations", { method: "POST", body: JSON.stringify(payload) }),
+  toggleAutomation: (id: string, enabled: boolean) =>
+    request<{ ok: boolean; item: AutomationRuleItem }>(`/api/automations/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
+    }),
+  deleteAutomation: (id: string) =>
+    request<{ ok: boolean }>(`/api/automations/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  evaluateAutomations: () =>
+    request<{ ok: boolean; triggered: Array<{ ruleId: string; ruleName: string; message: string; targetSceneId?: string }> }>(
+      "/api/automations/evaluate",
+      { method: "POST" },
+    ),
+  generateVoiceover: (payload: { text: string; voiceName?: string; styleHint?: string }) =>
+    request<{ ok: boolean; audioBase64?: string; mimeType?: string; error?: string }>("/api/video/voiceover", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  extractWebUrl: (payload: { url: string; question?: string; saveAsNote?: boolean }) =>
+    request<{
+      ok: boolean;
+      url: string;
+      summary: string;
+      highlights: string[];
+      visual?: Record<string, unknown>;
+      citations: Array<{ title: string; uri: string }>;
+      error?: string;
+    }>("/api/web/extract", { method: "POST", body: JSON.stringify(payload) }),
+  sendBlenderScript: (script: string) =>
+    request<{ ok: boolean; output?: string; error?: string }>("/api/bridge/blender", {
+      method: "POST",
+      body: JSON.stringify({ script }),
+    }),
+  getGatewayFeed: () => request<{ messages: GatewayMessageItem[] }>("/api/gateway/feed"),
+  sendGatewayInbound: (payload: {
+    platform: "telegram" | "discord" | "slack" | "whatsapp";
+    sender?: string;
+    text: string;
+  }) =>
+    request<{ ok: boolean; inbound: GatewayMessageItem; outbound: GatewayMessageItem; feed: GatewayMessageItem[] }>(
+      "/api/gateway/inbound",
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+
+  // Screen Vision (Browser getDisplayMedia -> Gemini Vision)
+  analyzeScreenFrame: (imageData: string, question?: string) =>
+    request<{ ok: boolean; description?: string; model?: string; error?: string }>("/api/vision/analyze", {
+      method: "POST",
+      body: JSON.stringify({ imageData, question }),
+    }),
+
+  // Optional Desktop Bridge & Key-less Account Connectors
+  getBridgeStatus: () => request<BridgeStatusInfo>("/api/bridge/status"),
+  rotateBridgeToken: () => request<{ ok: boolean; pairingToken: string }>("/api/bridge/rotate-token", { method: "POST" }),
+  bridgeCompanionDownloadUrl: () => `${backendBaseUrl()}/api/bridge/companion-script`,
+  getAccountConnectors: () =>
+    request<{ connectors: AccountConnectorItem[]; bridge: BridgeStatusInfo }>("/api/account-connectors"),
+  connectAccountConnector: (id: string, payload: { token?: string; accountLabel?: string }) =>
+    request<{ ok: boolean; connected?: boolean; message?: string; connector?: AccountConnectorItem }>(
+      `/api/account-connectors/${encodeURIComponent(id)}/connect`,
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+  disconnectAccountConnector: (id: string) =>
+    request<{ ok: boolean }>(`/api/account-connectors/${encodeURIComponent(id)}/disconnect`, { method: "POST" }),
+
+  // Legacy Memory & Skills
   getMemory: () => request<{ items: MemoryItem[] }>("/agent/memory"),
   getMemoryContent: (path: string) =>
-    request<{ path: string; content: string }>(
-      `/agent/memory/content?path=${encodeURIComponent(path)}`,
-    ),
+    request<{ path: string; content: string }>(`/agent/memory/content?path=${encodeURIComponent(path)}`),
   deleteMemory: (path: string) =>
     request<{ ok: boolean }>(`/agent/memory?path=${encodeURIComponent(path)}`, { method: "DELETE" }),
-
-  // Skills
   getSkills: () => request<{ items: SkillItem[] }>("/agent/skills"),
   getSkillContent: (path: string) =>
-    request<{ path: string; content: string; files?: string[] }>(
-      `/agent/skills/content?path=${encodeURIComponent(path)}`,
-    ),
+    request<{ path: string; content: string; files?: string[] }>(`/agent/skills/content?path=${encodeURIComponent(path)}`),
   deleteSkill: (path: string) =>
     request<{ ok: boolean }>(`/agent/skills?path=${encodeURIComponent(path)}`, { method: "DELETE" }),
 
@@ -243,30 +685,23 @@ export const agentApi = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  /** Removes the stored provider key (Windows Credential Manager). */
   removeKey: () =>
     request<{ ok: boolean }>("/agent/settings", {
       method: "POST",
       body: JSON.stringify({ removeKey: true }),
     }),
-  /** Tiny real provider request with the stored key → plain-language result. */
   testConnection: () =>
     request<{ ok: boolean; message: string }>("/agent/test-connection", { method: "POST" }),
 
-  // Desktop actions (frontend must confirm with the user first)
+  // Workshop artifacts & code execution
   runCode: (language: string, code: string) =>
     request<{ ok: boolean; stdout?: string; stderr?: string; error?: string; durationMs?: number }>(
       "/workspace/run-code",
       { method: "POST", body: JSON.stringify({ language, code }) },
     ),
-
-  // ---------------- Workspace artifacts (Phase 6) ----------------
   listArtifacts: () =>
-    request<{ artifacts: WorkspaceArtifact[]; current: WorkspaceArtifact | null }>(
-      "/workspace/artifacts",
-    ),
-  clearArtifacts: () =>
-    request<{ ok: boolean }>("/workspace/clear", { method: "POST" }),
+    request<{ artifacts: WorkspaceArtifact[]; current: WorkspaceArtifact | null }>("/workspace/artifacts"),
+  clearArtifacts: () => request<{ ok: boolean }>("/workspace/clear", { method: "POST" }),
   undoArtifact: (artifactId: string) =>
     request<{ ok: boolean; artifact: WorkspaceArtifact }>("/workspace/undo", {
       method: "POST",
@@ -283,12 +718,10 @@ export const agentApi = {
       body: JSON.stringify({ artifactId, folder }),
     }),
   pickFolder: () =>
-    request<{ ok: boolean; folder: string; error?: string }>("/workspace/pick-folder", {
-      method: "POST",
-    }),
+    request<{ ok: boolean; folder: string; error?: string }>("/workspace/pick-folder", { method: "POST" }),
 
-  // ---------------- Hermes control (Phase 3) ----------------
-  getProviders: () => request<{ providers: ProviderInfo[] }>("/hermes/providers"),
+  // Providers, Toolsets, MCP, Cron, Gateway
+  getProviders: () => request<{ providers: ProviderInfo[] }>("/agent/providers"),
   saveProviderKey: (slug: string, key: string, envVar?: string) =>
     request<{ ok: boolean; envVar: string }>("/hermes/providers/key", {
       method: "POST",
@@ -313,28 +746,29 @@ export const agentApi = {
       method: "POST",
       body: JSON.stringify({ name }),
     }),
-
   getToolsets: () => request<{ toolsets: ToolsetInfo[] }>("/hermes/toolsets"),
   toggleToolset: (name: string, enabled: boolean) =>
     request<{ ok: boolean; enabled: string[] }>("/hermes/toolsets/toggle", {
       method: "POST",
       body: JSON.stringify({ name, enabled }),
     }),
-
   getMcpServers: () => request<{ servers: McpServerInfo[] }>("/hermes/mcp"),
   addMcpServer: (payload: { name: string; url?: string; command?: string; args?: string[] }) =>
     request<{ ok: boolean }>("/hermes/mcp/add", { method: "POST", body: JSON.stringify(payload) }),
   removeMcpServer: (name: string) =>
-    request<{ ok: boolean }>("/hermes/mcp/remove", {
-      method: "POST",
-      body: JSON.stringify({ name }),
-    }),
+    request<{ ok: boolean }>("/hermes/mcp/remove", { method: "POST", body: JSON.stringify({ name }) }),
   testMcpServer: (name: string) =>
-    request<{ ok: boolean; output: string }>("/hermes/mcp/test", {
+    request<{ ok: boolean; output: string }>("/hermes/mcp/test", { method: "POST", body: JSON.stringify({ name }) }),
+  addArtCraftMcpPreset: (app: "all" | "designcraft" | "photocraft" | "vectorcraft" | "lightcraft" = "all") =>
+    request<{ ok: boolean; added: string[]; servers: McpServerInfo[] }>("/api/mcp/artcraft/preset", {
       method: "POST",
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ app }),
     }),
-
+  executeArtCraftMcp: (payload: { app: string; instruction: string; toolName?: string; endpointUrl?: string }) =>
+    request<{ ok: boolean; via?: string; cliCommand?: string; output?: unknown; result?: unknown; error?: string }>(
+      "/api/mcp/artcraft/execute",
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
   getCronJobs: () => request<{ jobs: CronJobInfo[] }>("/hermes/cron"),
   createCronJob: (payload: {
     schedule: string;
@@ -353,7 +787,6 @@ export const agentApi = {
       method: "POST",
       body: JSON.stringify({ action, jobId }),
     }),
-
   getGateway: () => request<GatewayStatus>("/hermes/gateway"),
   startGateway: () => request<{ ok: boolean; running: boolean; pid?: number }>("/hermes/gateway/start", { method: "POST" }),
   stopGateway: () => request<{ ok: boolean; running: boolean }>("/hermes/gateway/stop", { method: "POST" }),
@@ -368,21 +801,9 @@ export const agentApi = {
       method: "POST",
       body: JSON.stringify({ platform }),
     }),
-
   getDoctor: () => request<{ report: string }>("/hermes/doctor"),
-  getSkillsHub: (q = "") => request<{ output: string }>(`/hermes/skills/hub?q=${encodeURIComponent(q)}`),
-  installSkill: (name: string) =>
-    request<{ ok: boolean; output: string }>("/hermes/skills/install", {
-      method: "POST",
-      body: JSON.stringify({ name }),
-    }),
-  uninstallSkill: (name: string) =>
-    request<{ ok: boolean; output: string }>("/hermes/skills/uninstall", {
-      method: "POST",
-      body: JSON.stringify({ name }),
-    }),
 
-  // ---------------- PC control, files, vision (Phase 4) ----------------
+  // Guardrails & Desktop control
   getPermissions: () => request<PermissionsState>("/permissions"),
   setToolMode: (tool: string, mode: string) =>
     request<{ ok: boolean; modes: Record<string, string> }>("/permissions/mode", {
@@ -395,7 +816,6 @@ export const agentApi = {
       body: JSON.stringify({ engaged }),
     }),
   getAudit: (limit = 60) => request<{ entries: AuditEntry[] }>(`/permissions/audit?limit=${limit}`),
-
   getApps: (q = "") =>
     request<{ apps: StartMenuApp[]; count: number | null; indexedAt: string | null }>(
       `/desktop/apps?q=${encodeURIComponent(q)}`,
@@ -422,38 +842,13 @@ export const agentApi = {
       method: "POST",
       body: JSON.stringify({ keys }),
     }),
-
-  planFiles: (directory: string) =>
-    request<FilePlan>("/files/plan", { method: "POST", body: JSON.stringify({ directory }) }),
-  applyFiles: (planId: string) =>
-    request<{ ok: boolean; moved: number; failed: { name: string; reason: string }[]; error?: string }>(
-      "/files/apply",
-      { method: "POST", body: JSON.stringify({ planId }) },
-    ),
-  undoFiles: () =>
-    request<{ ok: boolean; restored: number; problems: string[]; error?: string }>("/files/undo", {
-      method: "POST",
-    }),
-  getFileJournal: () =>
-    request<{ entries: { id: string; ts: string; directory: string; moves: { from: string; to: string }[]; undone: boolean }[] }>(
-      "/files/journal",
-    ),
-  getProtectedFolders: () => request<{ folders: string[] }>("/files/protected"),
-  setProtectedFolders: (folders: string[]) =>
-    request<{ ok: boolean; folders: string[] }>("/files/protected", {
-      method: "POST",
-      body: JSON.stringify({ folders }),
-    }),
-
-  seeScreen: (payload: { question?: string; window?: string; model?: string }) =>
+  seeScreen: (payload: { question?: string; window?: string; model?: string; imageData?: string }) =>
     request<{ ok: boolean; description?: string; model?: string; imagePath?: string; error?: string }>(
       "/vision/see",
       { method: "POST", body: JSON.stringify(payload) },
     ),
-  visionImageUrl: (path: string) =>
-    `${backendBaseUrl()}/vision/image?path=${encodeURIComponent(path)}`,
 
-  // ---------------- voice, actions, music (Phase 5) ----------------
+  // Voice & Actions
   voiceStatus: () => request<VoiceSettings>("/voice/status"),
   getMics: () => request<{ mics: MicInfo[] }>("/voice/mics"),
   listenVoice: (source = "manual") =>
@@ -462,44 +857,9 @@ export const agentApi = {
       body: JSON.stringify({ source }),
     }),
   cancelVoice: () => request<{ ok: boolean; state?: string }>("/voice/cancel", { method: "POST" }),
-  testWav: (path: string, simulateWake = false) =>
-    request<{ ok: boolean; text?: string; wakeScore?: number | null; duration?: number; error?: string }>(
-      "/voice/test-wav",
-      { method: "POST", body: JSON.stringify({ path, simulateWake }) },
-    ),
   runAction: (text: string) =>
     request<{ handled: boolean; reply?: string; data?: Record<string, unknown> }>("/actions/run", {
       method: "POST",
       body: JSON.stringify({ text }),
     }),
-
-  spotifyStatus: () => request<SpotifyStatus>("/music/spotify/status"),
-  setSpotifyClientId: (clientId: string) =>
-    request<{ ok: boolean; clientId: string }>("/music/spotify/client", {
-      method: "POST",
-      body: JSON.stringify({ clientId }),
-    }),
-  spotifyAuthUrl: (open = false) =>
-    request<{ ok: boolean; url?: string; error?: string }>(
-      `/music/spotify/auth-url?open=${open ? "true" : "false"}`,
-    ),
-  spotifyPlay: (query: string) =>
-    request<{ ok: boolean; detail?: string; level?: number; error?: string }>("/music/spotify/play", {
-      method: "POST",
-      body: JSON.stringify({ query }),
-    }),
-  spotifyControl: (action: "play" | "pause" | "next" | "previous") =>
-    request<{ ok: boolean; detail?: string; error?: string }>("/music/spotify/control", {
-      method: "POST",
-      body: JSON.stringify({ action }),
-    }),
-  spotifyDisconnect: () => request<{ ok: boolean }>("/music/spotify/disconnect", { method: "POST" }),
-  spotifyRedirectUri: () => `${backendBaseUrl()}/music/spotify/callback`,
 };
-
-export interface MicInfo {
-  id: string;
-  name: string;
-  channels: number;
-  default: boolean;
-}

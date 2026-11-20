@@ -1,417 +1,590 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
+  BellRing,
+  Calendar,
+  CheckCircle2,
+  Eye,
+  Globe,
+  Home,
+  LayoutGrid,
+  PhoneCall,
+  Pin,
+  Play,
+  Sliders,
   Sparkles,
-  Eraser,
-  MessageSquare,
-  Volume2,
-  Mic,
-  Layers,
-  Box,
-  Compass,
+  Trash2,
 } from "lucide-react";
 import JarvisOrb from "@/components/JarvisOrb";
+import { ChatWindow } from "@/components/home/ChatWindow";
 import { InputBar } from "@/components/home/InputBar";
 import { OrbCustomizer } from "@/components/home/OrbCustomizer";
-import { ArtifactRenderer } from "@/components/workspace/ArtifactRenderer";
-import { ChatWindow } from "@/components/home/ChatWindow";
-import { audioLevel, warmUpVoices } from "@/lib/voiceEngine";
-import { agentService } from "@/lib/agentService";
+import { SessionBar } from "@/components/home/SessionBar";
+import { LiveCallPanel } from "@/components/voice/LiveCallPanel";
 import { agentApi } from "@/lib/agentApi";
-import type { Artifact } from "@/lib/artifacts";
-import {
-  useAgentStore,
-  useChatStore,
-  useUiStore,
-  useWorkspaceStore,
-} from "@/store";
-
-const BLUEPRINT_PRESETS = [
-  {
-    title: "Mechanical Watch",
-    desc: "Layered gears, escapement & balance wheel",
-    prompt: "build me a mechanical watch movement with brass gears and escapement",
-  },
-  {
-    title: "3D Spaceship",
-    desc: "Futuristic hull with glowing blue ion engines",
-    prompt: "build me a 3D spaceship with sleek wings and glowing blue engines",
-  },
-  {
-    title: "Gaming PC Rig",
-    desc: "Chassis, liquid cooling block & GPU fans",
-    prompt: "build me a 3D gaming PC with liquid cooling pipes and cooling fans",
-  },
-  {
-    title: "Solar System",
-    desc: "Orbital simulation around a glowing star",
-    prompt: "build an animated solar system with orbiting planets around a glowing sun",
-  },
-];
+import { agentService } from "@/lib/agentService";
+import { searchMemories, sortUpcomingEvents } from "@/lib/memoryAndCalendar";
+import { cn } from "@/lib/cn";
+import { useChatStore, useHudStore, useLifeStore, useUiStore } from "@/store";
+import type { LiveVisualSpec } from "@/types";
 
 export default function HomePage() {
-  const isSpeaking = useChatStore((s) => s.isSpeaking);
+  const [customizerOpen, setCustomizerOpen] = useState(false);
+  const [liveCallOpen, setLiveCallOpen] = useState(false);
+  const [briefingOpen, setBriefingOpen] = useState(false);
+  const [urlBarOpen, setUrlBarOpen] = useState(false);
+  const [extractUrl, setExtractUrl] = useState("");
+  const [extractFocus, setExtractFocus] = useState("");
+  const [extractSaveNote, setExtractSaveNote] = useState(true);
+  const [extracting, setExtracting] = useState(false);
+  const [briefingData, setBriefingData] = useState<Awaited<ReturnType<typeof agentApi.getBriefing>> | null>(null);
+
+  const visibleWidgets = useHudStore((s) => s.visibleWidgets);
+  const dockOpen = useHudStore((s) => s.dockOpen);
+  const setDockOpen = useHudStore((s) => s.setDockOpen);
+  const coreWidthPx = useHudStore((s) => s.coreWidthPx);
+  const dockWidthPx = useHudStore((s) => s.dockWidthPx);
+  const setCoreWidthPx = useHudStore((s) => s.setCoreWidthPx);
+  const setDockWidthPx = useHudStore((s) => s.setDockWidthPx);
+  const assistantName = useHudStore((s) => s.persona.assistantName || "JARVIS");
+
+  const dragStateRef = useRef<{ side: "core" | "dock"; startX: number; startW: number } | null>(null);
+
+  const clearMessages = useChatStore((s) => s.clearMessages);
+  const addMessage = useChatStore((s) => s.addMessage);
+  const attachVisualToMessage = useChatStore((s) => s.attachVisualToMessage);
+  const attachCitationsToMessage = useChatStore((s) => s.attachCitationsToMessage);
+  const messagesCount = useChatStore((s) => s.messages.length);
   const isListening = useChatStore((s) => s.isListening);
-  const isThinking = useAgentStore((s) => s.isThinking);
-  const currentModel = useAgentStore((s) => s.currentModel);
-  const messages = useChatStore((s) => s.messages);
+  const isSpeaking = useChatStore((s) => s.isSpeaking);
+
+  const memories = useLifeStore((s) => s.memories);
+  const calendar = useLifeStore((s) => s.calendar);
+  const smartHome = useLifeStore((s) => s.smartHome);
+  const mediaHistory = useLifeStore((s) => s.mediaHistory);
+  const refreshAll = useLifeStore((s) => s.refreshAll);
+  const refreshDomain = useLifeStore((s) => s.refreshDomain);
+
   const setActiveTab = useUiStore((s) => s.setActiveTab);
 
-  const artifacts = useWorkspaceStore((s) => s.artifacts);
-  const activeId = useWorkspaceStore((s) => s.activeId);
-  const clear = useWorkspaceStore((s) => s.clear);
-  const replaceArtifacts = useWorkspaceStore((s) => s.replaceArtifacts);
-
-  const [level, setLevel] = useState(0);
-  const [showFullChat, setShowFullChat] = useState(false);
-  const stageContainerRef = useRef<HTMLDivElement>(null);
-
-  const active = useMemo(
-    () =>
-      artifacts.find((a) => a.id === activeId) ??
-      artifacts[artifacts.length - 1] ??
-      null,
-    [artifacts, activeId]
-  );
-
-  // Load voices early
   useEffect(() => {
-    warmUpVoices();
-  }, []);
+    void refreshAll();
+    void agentApi.getBriefing().then(setBriefingData).catch(() => undefined);
+    const onToggleLive = () => setLiveCallOpen((v) => !v);
+    window.addEventListener("jarvis-toggle-live-call", onToggleLive);
+    return () => window.removeEventListener("jarvis-toggle-live-call", onToggleLive);
+  }, [refreshAll]);
 
-  // Sync workspace artifacts from backend on load
   useEffect(() => {
-    agentApi
-      .listArtifacts()
-      .then((result) => {
-        if (result.artifacts?.length) {
-          replaceArtifacts(
-            result.artifacts.map((raw) => ({
-              ...(raw as unknown as Artifact),
-              remote: true,
-            }))
-          );
-        }
-      })
-      .catch(() => {
-        /* offline fallback */
-      });
-  }, [replaceArtifacts]);
-
-  // Audio level tracking for the orb
-  useEffect(() => {
-    if (!isListening && !isSpeaking) {
-      setLevel(0);
-      return;
-    }
-    let raf = 0;
-    const tick = () => {
-      setLevel(audioLevel);
-      raf = requestAnimationFrame(tick);
+    const onMove = (e: PointerEvent) => {
+      if (!dragStateRef.current) return;
+      const dx = e.clientX - dragStateRef.current.startX;
+      if (dragStateRef.current.side === "core") {
+        setCoreWidthPx(dragStateRef.current.startW + dx);
+      } else {
+        setDockWidthPx(dragStateRef.current.startW - dx);
+      }
     };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [isListening, isSpeaking]);
+    const onUp = () => {
+      dragStateRef.current = null;
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [setCoreWidthPx, setDockWidthPx]);
 
-  // Latest spoken line for the HUD subtitles: prefer JARVIS, fall back to you.
-  const latestMessage = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === "assistant") return messages[i];
-    }
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === "user") return messages[i];
-    }
-    return null;
-  }, [messages]);
+  const upcomingEvents = useMemo(
+    () => sortUpcomingEvents(calendar).filter((e) => !e.completed).slice(0, 4),
+    [calendar],
+  );
+  const topMemories = useMemo(() => searchMemories(memories, "").slice(0, 4), [memories]);
 
-  const clearWorkbench = async () => {
-    if (!window.confirm("Clear the workshop? This removes every saved artifact version.")) {
-      return;
+  const showCore = visibleWidgets.includes("core");
+  const dockWidgets = visibleWidgets.filter((w) => w !== "core");
+
+  const toggleDevice = async (id: string, currentOn: boolean) => {
+    await agentApi.controlSmartDevice(id, { on: !currentOn });
+    await refreshDomain("smarthome");
+  };
+
+  const completeEvent = async (id: string) => {
+    await agentApi.updateCalendarEvent(id, { completed: true });
+    await refreshDomain("calendar");
+  };
+
+  const openBriefing = async () => {
+    const next = !briefingOpen;
+    setBriefingOpen(next);
+    if (next) {
+      const res = await agentApi.getBriefing().catch(() => null);
+      if (res) setBriefingData(res);
     }
-    clear();
+  };
+
+  const runUrlExtract = async () => {
+    if (!extractUrl.trim() || extracting) return;
+    setExtracting(true);
     try {
-      await agentApi.clearArtifacts();
-    } catch {
-      /* ignore */
+      const res = await agentApi.extractWebUrl({
+        url: extractUrl.trim(),
+        question: extractFocus.trim(),
+        saveAsNote: extractSaveNote,
+      });
+      if (!res.ok) {
+        addMessage("system", `⚠ ${res.error || "Could not extract URL"}`);
+      } else {
+        addMessage("user", `Extract insights from ${res.url}${extractFocus ? ` (${extractFocus})` : ""}`);
+        const msgId = addMessage("assistant", res.summary, false);
+        if (res.visual) {
+          attachVisualToMessage(msgId, res.visual as unknown as LiveVisualSpec);
+        }
+        if (res.citations?.length) {
+          attachCitationsToMessage(msgId, res.citations);
+        }
+        if (extractSaveNote) {
+          void refreshDomain("notes");
+        }
+        setUrlBarOpen(false);
+        setExtractUrl("");
+        setExtractFocus("");
+      }
+    } finally {
+      setExtracting(false);
     }
   };
 
-  const handlePrompt = (prompt: string) => {
-    agentService.send(prompt);
-  };
+  const coreStateLabel = isSpeaking
+    ? "Speaking"
+    : isListening
+      ? "Listening"
+      : "Standby";
 
   return (
-    <div className="relative flex h-full w-full select-none overflow-hidden bg-black/60">
-      {/* ---------------- LEFT: HUD Column (Compact Companion Orb & Speech) ---------------- */}
-      <aside className="relative flex w-[370px] shrink-0 flex-col border-r border-white/10 bg-black/50 backdrop-blur-xl">
-        {/* Top HUD Telemetry Bar */}
-        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-          <div className="flex items-center gap-2">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
-            </span>
-            <span className="font-mono text-[11px] font-semibold tracking-wider text-fg-muted uppercase">
-              JARVIS HUD
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="rounded-md border border-white/10 bg-white/[0.03] px-2 py-0.5 font-mono text-[9px] text-accent">
-              {currentModel ? currentModel.split("/").pop() : "ONLINE"}
-            </span>
-            <button
-              type="button"
-              onClick={() => setShowFullChat(!showFullChat)}
-              title={showFullChat ? "Hide Chat Log" : "Show Chat Log"}
-              className={`rounded-lg p-1.5 transition-colors ${
-                showFullChat
-                  ? "bg-accent/20 text-accent"
-                  : "text-fg-muted hover:bg-white/5 hover:text-fg"
-              }`}
-            >
-              <MessageSquare size={14} />
-            </button>
-          </div>
-        </div>
-
-        {/* Scrollable middle: orb + subtitles + starters. Keeps the input pinned. */}
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        {/* Companion Orb Section */}
-        <div className="relative flex shrink-0 flex-col items-center justify-center p-3">
-          <div className="relative h-[180px] w-full max-w-[250px] overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-transparent shadow-[0_0_30px_rgba(0,212,255,0.06)]">
-            <JarvisOrb audioLevel={level} />
-
-            {/* Glowing state badge over orb */}
-            <div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2">
-              <span
-                className={`rounded-full border px-2.5 py-0.5 font-mono text-[9px] uppercase tracking-wider ${
-                  isSpeaking
-                    ? "border-accent/40 bg-accent/20 text-accent glow-blue"
-                    : isListening
-                    ? "border-red-500/40 bg-red-500/20 text-red-300"
-                    : isThinking
-                    ? "border-amber-500/40 bg-amber-500/20 text-amber-300"
-                    : "border-white/10 bg-black/40 text-fg-muted"
-                }`}
+    <div
+      className="flex h-full min-h-0 flex-col lg:flex-row"
+      style={
+        {
+          "--core-w": `${coreWidthPx}px`,
+          "--dock-w": `${dockWidthPx}px`,
+        } as CSSProperties
+      }
+    >
+      {/* Left Core Visualizer Stage */}
+      {showCore && (
+        <aside className="flex shrink-0 flex-col border-b border-border bg-background/40 p-4 lg:w-[var(--core-w)] lg:border-b-0">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-display text-xs font-semibold uppercase tracking-[0.14em] text-fg">
+                {assistantName} Core
+              </p>
+              <p className="text-[11px] text-fg-muted">{coreStateLabel}</p>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setLiveCallOpen((v) => !v)}
+                title="Live Duplex Voice & Screen Co-Pilot"
+                className={cn(
+                  "flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors",
+                  liveCallOpen
+                    ? "border-accent bg-accent/15 text-accent"
+                    : "border-border text-fg-muted hover:border-accent hover:text-fg",
+                )}
               >
-                {isSpeaking
-                  ? "Speaking"
-                  : isListening
-                  ? "Listening"
-                  : isThinking
-                  ? "Synthesizing"
-                  : "Standby"}
-              </span>
+                <PhoneCall size={12} /> Live
+              </button>
+              <button
+                type="button"
+                onClick={() => setCustomizerOpen((v) => !v)}
+                title="Customize 3D Core Visualizer"
+                className={cn(
+                  "rounded-lg border border-border p-1.5 text-fg-muted transition-colors hover:border-accent hover:text-fg",
+                  customizerOpen && "border-accent text-accent",
+                )}
+              >
+                <Sliders size={14} />
+              </button>
             </div>
           </div>
-        </div>
 
-        {/* Holographic Speech Subtitles / Dialogue Banner */}
-        <div className="flex min-h-[90px] max-h-[140px] flex-col justify-center px-4 py-2">
-          {latestMessage ? (
-            <motion.div
-              key={latestMessage.id}
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="rounded-xl border border-accent/20 bg-accent/[0.05] p-2.5 shadow-[0_0_15px_rgba(0,212,255,0.05)]"
-            >
-              <div className="flex items-center gap-1.5 pb-1">
-                {latestMessage.role === "assistant" ? (
-                  <>
-                    <Volume2 size={12} className="text-accent" />
-                    <span className="font-mono text-[9px] font-semibold text-accent uppercase">
-                      JARVIS Spoken
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <Mic size={12} className="text-fg-muted" />
-                    <span className="font-mono text-[9px] text-fg-muted uppercase">
-                      You
-                    </span>
-                  </>
-                )}
-              </div>
-              <p className="line-clamp-3 text-xs leading-relaxed text-fg/90">
-                {latestMessage.content.replace(/```[\s\S]*?```/g, "").trim() ||
-                  "On the bench, sir."}
-              </p>
-            </motion.div>
-          ) : (
-            <div className="flex items-center justify-center rounded-xl border border-dashed border-white/10 p-3 text-center">
-              <p className="text-[11px] text-fg-muted">
-                Voice active · Say &quot;Hey JARVIS&quot; or speak a command
-              </p>
+          <div className="relative my-2 h-44 w-full shrink-0 lg:h-56">
+            <JarvisOrb />
+          </div>
+
+          {liveCallOpen && (
+            <div className="mb-2.5">
+              <LiveCallPanel onClose={() => setLiveCallOpen(false)} />
             </div>
           )}
-        </div>
 
-        {/* Quick Voice Blueprint Starters */}
-        <div className="mt-auto px-4 pb-2">
-          <p className="pb-1.5 font-mono text-[10px] tracking-wider text-fg-muted uppercase">
-            Quick Workshop Blueprints
-          </p>
-          <div className="grid grid-cols-2 gap-1.5">
-            {BLUEPRINT_PRESETS.map((bp) => (
-              <button
-                key={bp.title}
-                type="button"
-                onClick={() => handlePrompt(bp.prompt)}
-                className="group flex flex-col rounded-lg border border-white/10 bg-white/[0.02] p-1.5 text-left transition-all hover:border-accent/40 hover:bg-accent/[0.06]"
-              >
-                <span className="text-[11px] font-medium text-fg/85 group-hover:text-accent">
-                  {bp.title}
-                </span>
-                <span className="truncate text-[9px] text-fg-muted">
-                  {bp.desc}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        </div>
-
-        {/* Discreet Input & Voice Bar (InputBar floats, so reserve its height) */}
-        <div className="relative h-[78px] shrink-0 border-t border-white/10">
-          <InputBar onSend={(text, model) => agentService.send(text, model)} />
-        </div>
-      </aside>
-
-      {/* Chat transcript overlays the stage so long answers stay readable. */}
-      <AnimatePresence>
-        {showFullChat && (
-          <motion.div
-            initial={{ opacity: 0, x: -24 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -24 }}
-            className="absolute inset-y-0 left-0 z-40 flex w-[560px] max-w-[85vw] flex-col border-r border-accent/20 bg-black/95 p-4 backdrop-blur-2xl"
-          >
-            <div className="flex items-center justify-between pb-2">
-              <span className="font-mono text-xs text-accent">CHAT TRANSCRIPT</span>
-              <button
-                type="button"
-                onClick={() => setShowFullChat(false)}
-                className="rounded px-2 py-0.5 text-xs text-fg-muted hover:text-fg"
-              >
-                ✕ Close
-              </button>
+          {customizerOpen && (
+            <div className="mb-3 max-h-60 overflow-y-auto">
+              <OrbCustomizer open={customizerOpen} onClose={() => setCustomizerOpen(false)} />
             </div>
-            <div className="min-h-0 flex-1 overflow-hidden">
-              <ChatWindow />
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          )}
 
-      {/* ---------------- RIGHT: The Live Workshop Stage ---------------- */}
-      <section
-        ref={stageContainerRef}
-        className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-black/40"
-      >
-        {/* Workshop Stage Header */}
-        <div className="flex items-center justify-between border-b border-white/10 px-5 py-2.5">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5">
-              <Box size={16} className="text-accent" />
-              <h2 className="font-mono text-xs font-semibold tracking-wider text-fg uppercase">
-                Live Workshop Bench
-              </h2>
-            </div>
-            {active && (
-              <span className="flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 font-mono text-[10px] text-fg-muted">
-                <span className="text-accent uppercase">{active.kind}</span>
-                <span>·</span>
-                <span className="max-w-[200px] truncate text-fg/90">
-                  {active.title}
-                </span>
-                {active.version && active.version > 1 && (
-                  <span className="text-fg-muted">v{active.version}</span>
-                )}
-              </span>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2">
-            {active && (
-              <button
-                type="button"
-                onClick={() => void clearWorkbench()}
-                className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-white/5 hover:text-fg"
-              >
-                <Eraser size={13} /> Clear
-              </button>
-            )}
+          <div className="mt-auto grid grid-cols-2 gap-1.5 pt-2 text-[11px]">
+            <button
+              type="button"
+              onClick={() =>
+                agentService.send(
+                  briefingData?.briefing.suggestedPrompt ||
+                    "Give me a concise briefing of my schedule and explain our priorities with a live chart.",
+                )
+              }
+              className="hud-elevated px-2.5 py-2 text-left font-medium text-fg transition-colors hover:border-accent"
+            >
+              Daily Briefing
+            </button>
             <button
               type="button"
               onClick={() => setActiveTab("workspace")}
-              title="Open full expanded workspace with history and tabs"
-              className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-1 text-xs text-fg-muted transition-colors hover:border-accent/40 hover:text-fg"
+              className="hud-elevated px-2.5 py-2 text-left font-medium text-fg transition-colors hover:border-accent"
             >
-              <Layers size={13} /> Full Workspace
+              Open Workshop
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("video")}
+              className="hud-elevated px-2.5 py-2 text-left font-medium text-fg transition-colors hover:border-accent"
+            >
+              Video Studio
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("settings")}
+              className="hud-elevated px-2.5 py-2 text-left font-medium text-fg transition-colors hover:border-accent"
+            >
+              40 Themes
+            </button>
+          </div>
+        </aside>
+      )}
+
+      {showCore && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          title="Drag to resize JARVIS Core column"
+          onPointerDown={(e) => {
+            dragStateRef.current = { side: "core", startX: e.clientX, startW: coreWidthPx };
+          }}
+          className="hidden w-1.5 shrink-0 cursor-col-resize border-l border-border bg-transparent transition-colors hover:bg-accent/50 lg:block"
+        />
+      )}
+
+      {/* Center Command Conversation & Live Graphs */}
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-5 py-2.5">
+          <div className="flex items-center gap-2">
+            <h1 className="font-display text-sm font-semibold text-fg">Command HUD</h1>
+            <span className="hidden text-xs text-fg-muted sm:inline">
+              Live visuals · Search · Screen Vision · Personal Butler
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => void openBriefing()}
+              className={cn(
+                "flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                briefingOpen
+                  ? "border-accent bg-elevated text-accent"
+                  : "border-border text-fg-muted hover:text-fg",
+              )}
+            >
+              <BellRing size={12} /> Briefing
+            </button>
+            <button
+              type="button"
+              onClick={() => setUrlBarOpen((v) => !v)}
+              className={cn(
+                "flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                urlBarOpen
+                  ? "border-accent bg-elevated text-accent"
+                  : "border-border text-fg-muted hover:text-fg",
+              )}
+            >
+              <Globe size={12} /> Read URL
+            </button>
+            {messagesCount > 0 && (
+              <button
+                type="button"
+                onClick={clearMessages}
+                className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-fg-muted transition-colors hover:bg-elevated hover:text-fg"
+              >
+                <Trash2 size={12} /> Clear
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setDockOpen(!dockOpen)}
+              className={cn(
+                "hidden items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-colors lg:inline-flex",
+                dockOpen
+                  ? "border-accent/50 bg-elevated text-accent"
+                  : "border-border text-fg-muted hover:text-fg",
+              )}
+            >
+              <LayoutGrid size={12} /> HUD Dock
             </button>
           </div>
         </div>
 
-        {/* Live Stage Body */}
-        <div className="relative min-h-0 flex-1 overflow-hidden">
-          {active ? (
-            <div className="h-full w-full">
-              <ArtifactRenderer artifact={active} />
-            </div>
-          ) : (
-            <div className="relative flex h-full flex-col items-center justify-center p-8 text-center">
-              {/* Futuristic Blueprint Ambient Grid */}
-              <div
-                className="pointer-events-none absolute inset-0 opacity-20"
-                style={{
-                  backgroundImage:
-                    "linear-gradient(to right, rgba(0, 212, 255, 0.15) 1px, transparent 1px), linear-gradient(to bottom, rgba(0, 212, 255, 0.15) 1px, transparent 1px)",
-                  backgroundSize: "32px 32px",
-                }}
-              />
+        <SessionBar />
 
-              <div className="relative z-10 flex max-w-lg flex-col items-center gap-4">
-                <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl border border-accent/30 bg-accent/10 shadow-[0_0_25px_rgba(0,212,255,0.15)]">
-                  <Compass size={32} className="text-accent animate-pulse" />
-                </div>
-                <div>
-                  <h3 className="text-base font-medium tracking-tight text-fg">
-                    Workshop Stage Ready
-                  </h3>
-                  <p className="mt-1 text-xs leading-relaxed text-fg-muted">
-                    Speak or type a build instruction (e.g. &quot;build me a
-                    mechanical watch&quot; or &quot;build a 3D spaceship&quot;).
-                    JARVIS will assemble the components live right here on the
-                    bench.
+        {/* Proactive Butler Briefing Drawer */}
+        {briefingOpen && briefingData && (
+          <div className="border-b border-border bg-elevated/80 px-5 py-3">
+            <div className="mx-auto flex max-w-3xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-1">
+                <p className="flex items-center gap-1.5 text-xs font-semibold text-fg">
+                  <Sparkles size={13} className="text-accent" /> {briefingData.briefing.headline}
+                </p>
+                {briefingData.briefing.alerts.length > 0 && (
+                  <p className="text-[11px] text-fg-muted">
+                    {briefingData.briefing.alerts.join(" · ")}
                   </p>
-                </div>
-
-                <div className="grid w-full grid-cols-2 gap-2 pt-2">
-                  {BLUEPRINT_PRESETS.map((bp) => (
-                    <button
-                      key={bp.title}
-                      type="button"
-                      onClick={() => handlePrompt(bp.prompt)}
-                      className="flex flex-col rounded-xl border border-white/10 bg-white/[0.02] p-2.5 text-left transition-all hover:border-accent/40 hover:bg-accent/[0.05]"
-                    >
-                      <span className="flex items-center gap-1.5 text-xs font-medium text-fg">
-                        <Sparkles size={12} className="text-accent" />
-                        {bp.title}
-                      </span>
-                      <span className="mt-1 text-[10px] text-fg-muted">
-                        {bp.desc}
-                      </span>
-                    </button>
-                  ))}
-                </div>
+                )}
+                {briefingData.triggeredAutomations.length > 0 && (
+                  <p className="text-[11px] text-accent">
+                    Active Automation: {briefingData.triggeredAutomations[0].message}
+                  </p>
+                )}
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setBriefingOpen(false);
+                  agentService.send(briefingData.briefing.suggestedPrompt);
+                }}
+                className="shrink-0 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-background"
+              >
+                Visual Briefing
+              </button>
             </div>
-          )}
-        </div>
+          </div>
+        )}
+
+        {/* Active Web URL Extractor Bar */}
+        {urlBarOpen && (
+          <div className="border-b border-border bg-elevated/80 px-5 py-2.5">
+            <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-2">
+              <input
+                value={extractUrl}
+                onChange={(e) => setExtractUrl(e.target.value)}
+                placeholder="https://example.com/article-or-docs"
+                className="min-w-48 flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs text-fg outline-none focus:border-accent"
+              />
+              <input
+                value={extractFocus}
+                onChange={(e) => setExtractFocus(e.target.value)}
+                placeholder="Focus (optional)"
+                className="w-40 rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-fg outline-none focus:border-accent"
+              />
+              <label className="flex items-center gap-1 text-[11px] text-fg-muted">
+                <input
+                  type="checkbox"
+                  checked={extractSaveNote}
+                  onChange={(e) => setExtractSaveNote(e.target.checked)}
+                  className="accent-[var(--color-accent)]"
+                />
+                Save Note
+              </label>
+              <button
+                type="button"
+                disabled={extracting || !extractUrl.trim()}
+                onClick={() => void runUrlExtract()}
+                className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-background disabled:opacity-50"
+              >
+                {extracting ? "Reading…" : "Extract"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <ChatWindow onQuickPrompt={(p) => agentService.send(p)} />
+        <InputBar onSend={(text, model) => agentService.send(text, model)} />
       </section>
 
-      <OrbCustomizer />
+      {/* Right Customizable HUD Widget Dock */}
+      {dockOpen && dockWidgets.length > 0 && (
+        <>
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            title="Drag to resize HUD Dock"
+            onPointerDown={(e) => {
+              dragStateRef.current = { side: "dock", startX: e.clientX, startW: dockWidthPx };
+            }}
+            className="hidden w-1.5 shrink-0 cursor-col-resize border-l border-border bg-transparent transition-colors hover:bg-accent/50 lg:block"
+          />
+          <aside className="hidden shrink-0 flex-col gap-3 overflow-y-auto bg-background/30 p-3.5 lg:flex lg:w-[var(--dock-w)]">
+          {dockWidgets.map((widgetId) => {
+            if (widgetId === "schedule") {
+              return (
+                <div key="schedule" className="hud-panel p-3.5">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-fg">
+                      <Calendar size={13} className="text-accent" /> Upcoming Schedule
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("memory")}
+                      className="text-[11px] text-accent hover:underline"
+                    >
+                      View all
+                    </button>
+                  </div>
+                  {upcomingEvents.length === 0 ? (
+                    <p className="text-xs text-fg-muted">No pending events today.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {upcomingEvents.map((ev) => (
+                        <div
+                          key={ev.id}
+                          className="hud-elevated flex items-start justify-between gap-2 px-2.5 py-2 text-xs"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate font-medium text-fg">{ev.title}</p>
+                            <p className="font-mono text-[10px] text-fg-muted tabular-nums">
+                              {new Date(ev.startISO).toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                              {ev.location ? ` · ${ev.location}` : ""}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void completeEvent(ev.id)}
+                            title="Mark complete"
+                            className="text-fg-muted transition-colors hover:text-accent"
+                          >
+                            <CheckCircle2 size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            if (widgetId === "memories") {
+              return (
+                <div key="memories" className="hud-panel p-3.5">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-fg">
+                      <Pin size={13} className="text-accent" /> Personal Memory
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("memory")}
+                      className="text-[11px] text-accent hover:underline"
+                    >
+                      Manage
+                    </button>
+                  </div>
+                  <div className="space-y-1.5">
+                    {topMemories.map((m) => (
+                      <div key={m.id} className="hud-elevated px-2.5 py-2 text-xs">
+                        <p className="font-medium text-fg">{m.title}</p>
+                        <p className="mt-0.5 line-clamp-2 text-[11px] text-fg-muted">{m.content}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            }
+
+            if (widgetId === "smarthome") {
+              return (
+                <div key="smarthome" className="hud-panel p-3.5">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-fg">
+                      <Home size={13} className="text-accent" /> Smart Home
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("smarthome")}
+                      className="text-[11px] text-accent hover:underline"
+                    >
+                      All rooms
+                    </button>
+                  </div>
+                  <div className="space-y-1.5">
+                    {smartHome.devices.slice(0, 4).map((dev) => (
+                      <div
+                        key={dev.id}
+                        className="hud-elevated flex items-center justify-between gap-2 px-2.5 py-2 text-xs"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-fg">{dev.name}</p>
+                          <p className="text-[10px] text-fg-muted">{dev.statusText}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void toggleDevice(dev.id, dev.on)}
+                          className={cn(
+                            "shrink-0 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+                            dev.on
+                              ? "bg-accent text-background"
+                              : "border border-border bg-surface text-fg-muted",
+                          )}
+                        >
+                          {dev.on ? "On" : "Off"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            }
+
+            if (widgetId === "media") {
+              return (
+                <div key="media" className="hud-panel p-3.5">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-fg">
+                      <Play size={13} className="text-accent" /> Media Queue
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("smarthome")}
+                      className="text-[11px] text-accent hover:underline"
+                    >
+                      Search videos
+                    </button>
+                  </div>
+                  {mediaHistory.length === 0 ? (
+                    <p className="text-xs text-fg-muted">Ask JARVIS to find a video or song.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {mediaHistory.slice(0, 2).map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => setActiveTab("smarthome")}
+                          className="hud-elevated flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left text-xs transition-colors hover:border-accent"
+                        >
+                          <span className="min-w-0 truncate font-medium text-fg">{item.title}</span>
+                          <Eye size={12} className="shrink-0 text-accent" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            return null;
+          })}
+          </aside>
+        </>
+      )}
     </div>
   );
 }
