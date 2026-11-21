@@ -5,6 +5,7 @@
  */
 
 import { agentApi } from "@/lib/agentApi";
+import { FINISH_MS, isImmediateBargeIn, VoiceUtteranceBuffer } from "@/lib/voiceBuffer";
 import { setAudioLevel, setTtsStateListener, stopSpeaking } from "@/lib/voiceEngine";
 import { websocketService } from "@/lib/websocketService";
 import { useChatStore } from "@/store";
@@ -42,7 +43,10 @@ interface SpeechRecLike {
   onstart: (() => void) | null;
   onend: (() => void) | null;
   onerror: ((e: { error?: string }) => void) | null;
-  onresult: ((e: { results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null;
+  onresult: ((e: {
+    resultIndex?: number;
+    results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }>;
+  }) => void) | null;
   start: () => void;
   stop: () => void;
 }
@@ -51,6 +55,17 @@ let started = false;
 let state: VoiceState = "stopped";
 let sendTurn: ((text: string) => void) | null = null;
 let activeRecognition: SpeechRecLike | null = null;
+
+const utteranceBuffer = new VoiceUtteranceBuffer({
+  finishMs: FINISH_MS,
+  onDispatch: (utterance) => {
+    if (!utterance || isMiniWindow()) return;
+    sendTurn?.(utterance);
+  },
+  onBargeIn: () => {
+    handleBargeIn();
+  },
+});
 
 export function isMiniWindow(): boolean {
   return typeof window !== "undefined" && window.location.hash === "#mini";
@@ -111,6 +126,7 @@ export function initVoiceBridge(send: (text: string) => void): void {
   window.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
     if (useChatStore.getState().isSpeaking) stopSpeaking();
+    utteranceBuffer.clear();
     if (isListening()) void cancelMic();
   });
 }
@@ -138,10 +154,16 @@ export function handleVoiceLevel(level: number): void {
 export function handleTranscript(text: string): void {
   const trimmed = (text || "").trim();
   if (!trimmed || isMiniWindow()) return;
-  sendTurn?.(trimmed);
+  if (isImmediateBargeIn(trimmed)) {
+    utteranceBuffer.clear();
+    handleBargeIn();
+    return;
+  }
+  utteranceBuffer.push(trimmed, true);
 }
 
 export function handleBargeIn(): void {
+  utteranceBuffer.clear();
   if (useChatStore.getState().isSpeaking) stopSpeaking();
 }
 
@@ -152,10 +174,12 @@ export function handleVoiceError(message: string): void {
 
 export async function toggleMic(source: "ptt" | "manual" = "manual"): Promise<void> {
   if (isListening()) {
+    utteranceBuffer.flush();
     await cancelMic();
     return;
   }
   if (useChatStore.getState().isSpeaking) stopSpeaking();
+  utteranceBuffer.clear();
 
   const Rec =
     typeof window !== "undefined"
@@ -169,27 +193,32 @@ export async function toggleMic(source: "ptt" | "manual" = "manual"): Promise<vo
       const rec = new Rec();
       activeRecognition = rec;
       rec.lang = "en-US";
-      rec.interimResults = false;
+      rec.interimResults = true;
       rec.maxAlternatives = 1;
-      rec.continuous = false;
+      rec.continuous = true;
       rec.onstart = () => {
         playChime();
         setListeningFlag("listening");
       };
       rec.onresult = (evt) => {
-        const result = evt.results?.[0];
-        if (result && result[0]?.transcript) {
-          handleTranscript(result[0].transcript);
+        const startIdx = evt.resultIndex ?? 0;
+        for (let i = startIdx; i < evt.results.length; i += 1) {
+          const item = evt.results[i];
+          const transcript = item?.[0]?.transcript;
+          if (!transcript) continue;
+          utteranceBuffer.push(transcript, Boolean(item.isFinal));
         }
       };
       rec.onerror = (evt) => {
         if (evt.error && evt.error !== "no-speech" && evt.error !== "aborted") {
           handleVoiceError(`Browser speech error: ${evt.error}`);
         }
+        utteranceBuffer.flush();
         setListeningFlag("stopped");
       };
       rec.onend = () => {
         activeRecognition = null;
+        utteranceBuffer.flush();
         setListeningFlag("stopped");
       };
       rec.start();
@@ -212,6 +241,7 @@ export async function toggleMic(source: "ptt" | "manual" = "manual"): Promise<vo
 }
 
 export async function cancelMic(): Promise<void> {
+  utteranceBuffer.clear();
   if (activeRecognition) {
     try {
       activeRecognition.stop();

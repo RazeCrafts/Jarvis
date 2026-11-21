@@ -1,5 +1,25 @@
-import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
-import { ArrowUp, Eye, Film, Loader2, Mic, ScanSearch, X } from "lucide-react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type DragEvent,
+  type KeyboardEvent,
+} from "react";
+import {
+  ArrowUp,
+  Eye,
+  File as FileIcon,
+  FileText,
+  Film,
+  Image as ImageIcon,
+  Loader2,
+  Mic,
+  Music,
+  Paperclip,
+  ScanSearch,
+  X,
+} from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAgentStore, useChatStore, useHudStore, useUiStore, useVideoStore } from "@/store";
 import { toggleMic as toggleVoiceMic } from "@/lib/voiceController";
@@ -8,6 +28,8 @@ import { ScreenVisionBar } from "@/components/vision/ScreenVisionBar";
 import { agentApi } from "@/lib/agentApi";
 import { createDefaultClip, type VideoClip } from "@/lib/videoTimeline";
 import { detectNaturalNavigationIntent } from "@/lib/autoNavigator";
+import { analyzeMediaAudioUrl } from "@/lib/audioBeatAnalyzer";
+import { prepareFileAttachment, type PreparedAttachment } from "@/lib/fileAttachment";
 
 const MODEL_KEY = "jarvis-chat-model";
 const MODEL_PROVIDER_KEY = "jarvis-chat-model-provider";
@@ -20,15 +42,31 @@ function loadChatModel(): string {
   }
 }
 
-interface AttachedClipDraft {
-  id: string;
+export interface ChatSendAttachment {
   name: string;
-  url: string;
-  duration: number;
+  mimeType: string;
+  kind?: string;
+  dataBase64?: string;
+  textContent?: string;
 }
 
 interface Props {
-  onSend: (text: string, model?: string) => void;
+  onSend: (text: string, model?: string, attachments?: ChatSendAttachment[]) => void;
+}
+
+function AttachmentBadgeIcon({ kind }: { kind: PreparedAttachment["kind"] }) {
+  switch (kind) {
+    case "video":
+      return <Film size={12} className="shrink-0 text-accent" />;
+    case "image":
+      return <ImageIcon size={12} className="shrink-0 text-accent" />;
+    case "audio":
+      return <Music size={12} className="shrink-0 text-accent" />;
+    case "text":
+      return <FileText size={12} className="shrink-0 text-accent" />;
+    default:
+      return <FileIcon size={12} className="shrink-0 text-accent" />;
+  }
 }
 
 export function InputBar({ onSend }: Props) {
@@ -36,7 +74,8 @@ export function InputBar({ onSend }: Props) {
   const [model, setModel] = useState<string>(loadChatModel);
   const [provider, setProvider] = useState("");
   const [showVision, setShowVision] = useState(false);
-  const [attachedClips, setAttachedClips] = useState<AttachedClipDraft[]>([]);
+  const [attachments, setAttachments] = useState<PreparedAttachment[]>([]);
+  const [draggingOver, setDraggingOver] = useState(false);
 
   const isListening = useChatStore((s) => s.isListening);
   const isThinking = useAgentStore((s) => s.isThinking);
@@ -44,10 +83,11 @@ export function InputBar({ onSend }: Props) {
   const setActiveTab = useUiStore((s) => s.setActiveTab);
   const setCircleToSearchOpen = useUiStore((s) => s.setCircleToSearchOpen);
   const addVideoClips = useVideoStore((s) => s.addClips);
+  const setMusicTrack = useVideoStore((s) => s.setMusicTrack);
   const applyAutoEditDirective = useVideoStore((s) => s.applyAutoEditDirective);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const clipInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     agentApi
@@ -76,7 +116,7 @@ export function InputBar({ onSend }: Props) {
       });
   }, []);
 
-  const canSend = (value.trim().length > 0 || attachedClips.length > 0) && !isThinking;
+  const canSend = (value.trim().length > 0 || attachments.length > 0) && !isThinking;
 
   const changeModel = (next: string) => {
     setModel(next);
@@ -92,43 +132,82 @@ export function InputBar({ onSend }: Props) {
     }
   };
 
-  const handleClipAttach = (e: ChangeEvent<HTMLInputElement>) => {
+  const ingestFiles = async (fileList: File[]) => {
+    if (fileList.length === 0) return;
+    const prepared = await Promise.all(fileList.map((f) => prepareFileAttachment(f)));
+    setAttachments((prev) => [...prev, ...prepared]);
+  };
+
+  const handleFileAttach = (e: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
-
-    files.forEach((file) => {
-      const url = URL.createObjectURL(file);
-      const id = `draft-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      const probe = document.createElement("video");
-      probe.src = url;
-      probe.onloadedmetadata = () => {
-        setAttachedClips((prev) => [
-          ...prev,
-          {
-            id,
-            name: file.name,
-            url,
-            duration: Number.isFinite(probe.duration) && probe.duration > 0 ? probe.duration : 8,
-          },
-        ]);
-      };
-      probe.onerror = () => {
-        setAttachedClips((prev) => [...prev, { id, name: file.name, url, duration: 8 }]);
-      };
-    });
-
+    void ingestFiles(files);
     e.target.value = "";
   };
 
-  const submit = () => {
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDraggingOver(false);
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (files.length > 0) {
+      void ingestFiles(files);
+    }
+  };
+
+  const submit = async () => {
     if (!canSend) return;
     const text = value.trim();
+    const videoItems = attachments.filter((a) => a.kind === "video");
+    const audioItems = attachments.filter((a) => a.kind === "audio");
+    const imageItems = attachments.filter((a) => a.kind === "image");
+    const docItems = attachments.filter((a) => a.kind === "text" || a.kind === "document");
 
-    if (attachedClips.length > 0) {
-      const created: VideoClip[] = attachedClips.map((c) =>
-        createDefaultClip({ name: c.name, src: c.url, duration: c.duration }),
-      );
-      addVideoClips(created);
+    const wantsVideoEdit =
+      videoItems.length > 0 ||
+      (/\b(edit|cut|capcut|montage|reel|tiktok|beat|sync|timeline|video)\b/i.test(text) &&
+        (imageItems.length > 0 || audioItems.length > 0));
+
+    if (wantsVideoEdit) {
+      const timelineClips: VideoClip[] = [
+        ...videoItems.map((c) =>
+          createDefaultClip({
+            name: c.name,
+            src: c.objectUrl || "",
+            mediaType: "video",
+            duration: c.duration || 6,
+          }),
+        ),
+        ...imageItems.map((img) =>
+          createDefaultClip({
+            name: img.name,
+            src: img.objectUrl || "",
+            mediaType: "image",
+            duration: 4,
+          }),
+        ),
+      ];
+      if (timelineClips.length > 0) {
+        addVideoClips(timelineClips);
+      }
+
+      const firstAudio = audioItems[0];
+      const audioUrl = firstAudio?.objectUrl;
+      if (firstAudio && audioUrl) {
+        const beatRes = await analyzeMediaAudioUrl(audioUrl).catch(() => ({
+          duration: firstAudio.duration || 10,
+          bpm: 120,
+          beats: [],
+          energyDrops: [],
+          waveform: [],
+        }));
+        setMusicTrack({
+          url: audioUrl,
+          name: firstAudio.name,
+          bpm: beatRes.bpm,
+          beats: beatRes.beats,
+          waveform: beatRes.waveform,
+        });
+      }
+
       const intent = detectNaturalNavigationIntent(text, true);
       if (intent.videoEdit) {
         applyAutoEditDirective(intent.videoEdit);
@@ -136,18 +215,33 @@ export function InputBar({ onSend }: Props) {
       if (autoSwitchTabs) {
         setActiveTab("video");
       }
-      const clipNames = attachedClips.map((c) => c.name).join(", ");
-      const outgoing = text
-        ? `${text} [Clips loaded into Video Studio: ${clipNames}]`
-        : `Edit these attached clips in Video Studio and build a dynamic montage: ${clipNames}`;
-      onSend(outgoing, model || undefined);
-      setAttachedClips([]);
-      setValue("");
-      if (textareaRef.current) textareaRef.current.style.height = "auto";
-      return;
     }
 
-    onSend(value, model || undefined);
+    const forwardAttachments: ChatSendAttachment[] = [
+      ...imageItems,
+      ...audioItems,
+      ...docItems,
+    ]
+      .filter((a) => Boolean(a.dataBase64 || a.textContent))
+      .map((a) => ({
+        name: a.name,
+        mimeType: a.mimeType,
+        kind: a.kind,
+        ...(a.dataBase64 ? { dataBase64: a.dataBase64 } : {}),
+        ...(a.textContent ? { textContent: a.textContent } : {}),
+      }));
+
+    const attachedNames = attachments.map((a) => a.name).join(", ");
+    const outgoing = text
+      ? attachments.length > 0
+        ? `${text} [Attached: ${attachedNames}]`
+        : text
+      : wantsVideoEdit
+        ? `Edit these attached media files in CapCut Video Studio: ${attachedNames}`
+        : `Analyze these attached files: ${attachedNames}`;
+
+    onSend(outgoing, model || undefined, forwardAttachments);
+    setAttachments([]);
     setValue("");
     if (textareaRef.current) textareaRef.current.style.height = "auto";
   };
@@ -155,29 +249,42 @@ export function InputBar({ onSend }: Props) {
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      submit();
+      void submit();
     }
   };
 
   return (
-    <div className="shrink-0 px-5 pb-4 pt-2">
+    <div
+      className="shrink-0 px-5 pb-4 pt-2"
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDraggingOver(true);
+      }}
+      onDragLeave={() => setDraggingOver(false)}
+      onDrop={handleDrop}
+    >
       <div className="mx-auto max-w-3xl">
         {showVision && <ScreenVisionBar onClose={() => setShowVision(false)} />}
 
-        {attachedClips.length > 0 && (
+        {attachments.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2 rounded-xl border border-border bg-elevated/90 px-3 py-2">
-            {attachedClips.map((clip) => (
+            {attachments.map((att) => (
               <div
-                key={clip.id}
+                key={att.id}
                 className="flex items-center gap-2 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs text-fg"
               >
-                <Film size={12} className="text-accent" />
-                <span className="max-w-44 truncate">{clip.name}</span>
+                {att.kind === "image" && att.objectUrl ? (
+                  <img src={att.objectUrl} alt={att.name} className="h-5 w-5 rounded object-cover" />
+                ) : (
+                  <AttachmentBadgeIcon kind={att.kind} />
+                )}
+                <span className="max-w-44 truncate">{att.name}</span>
+                <span className="font-mono text-[10px] uppercase text-fg-muted">{att.kind}</span>
                 <button
                   type="button"
-                  onClick={() => setAttachedClips((prev) => prev.filter((c) => c.id !== clip.id))}
+                  onClick={() => setAttachments((prev) => prev.filter((c) => c.id !== att.id))}
                   className="text-fg-muted hover:text-fg"
-                  title="Remove clip"
+                  title="Remove attachment"
                 >
                   <X size={12} />
                 </button>
@@ -186,26 +293,28 @@ export function InputBar({ onSend }: Props) {
           </div>
         )}
 
-        <div className="hud-panel flex items-end gap-1.5 px-2.5 py-1.5 transition-colors focus-within:border-accent">
+        <div
+          className={cn(
+            "hud-panel flex items-end gap-1.5 px-2.5 py-1.5 transition-colors focus-within:border-accent",
+            draggingOver && "border-accent bg-accent/10",
+          )}
+        >
           <input
-            ref={clipInputRef}
+            ref={fileInputRef}
             type="file"
             multiple
-            accept="video/*"
-            onChange={handleClipAttach}
+            onChange={handleFileAttach}
             className="hidden"
           />
 
           <button
             type="button"
-            onClick={submit}
+            onClick={() => void submit()}
             disabled={!canSend}
             aria-label="Send message"
             className={cn(
               "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors",
-              canSend
-                ? "bg-accent text-background hover:opacity-90"
-                : "text-fg-muted/50",
+              canSend ? "bg-accent text-background hover:opacity-90" : "text-fg-muted/50",
             )}
           >
             {isThinking ? <Loader2 size={17} className="animate-spin" /> : <ArrowUp size={17} strokeWidth={2.2} />}
@@ -222,9 +331,11 @@ export function InputBar({ onSend }: Props) {
             }}
             onKeyDown={onKeyDown}
             placeholder={
-              isListening
-                ? "Listening…"
-                : "Ask JARVIS, attach clips, or use ArtCraft MCP…"
+              draggingOver
+                ? "Drop any video, audio, image, PDF, or code file here…"
+                : isListening
+                  ? "Listening…"
+                  : "Ask JARVIS or attach any file (video, audio, image, PDF, code)…"
             }
             aria-label="Message JARVIS"
             className="max-h-28 min-h-[36px] flex-1 resize-none bg-transparent px-1.5 py-2 text-sm leading-snug text-fg outline-none placeholder:truncate placeholder:text-fg-muted"
@@ -234,17 +345,17 @@ export function InputBar({ onSend }: Props) {
 
           <button
             type="button"
-            onClick={() => clipInputRef.current?.click()}
-            title="Attach video clips to auto-edit in Video Studio"
-            aria-label="Attach video clips"
+            onClick={() => fileInputRef.current?.click()}
+            title="Attach any file format (video, audio, image, PDF, documents, code)"
+            aria-label="Attach any file"
             className={cn(
               "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors",
-              attachedClips.length > 0
+              attachments.length > 0
                 ? "bg-accent/15 text-accent"
                 : "text-fg-muted hover:bg-elevated hover:text-fg",
             )}
           >
-            <Film size={17} strokeWidth={1.8} />
+            <Paperclip size={17} strokeWidth={1.8} />
           </button>
 
           <button

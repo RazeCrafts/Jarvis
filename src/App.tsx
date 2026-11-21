@@ -3,28 +3,34 @@ import { useEffect } from "react";
 import { MotionConfig, motion } from "framer-motion";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TitleBar } from "@/components/layout/TitleBar";
+import { WbReminderAlertBanner } from "@/components/layout/QuickUtilitiesBar";
 import { StartupGate } from "@/components/layout/StartupGate";
 import { ConfirmationDialog } from "@/components/layout/ConfirmationDialog";
 import { FloatingBlob } from "@/components/overlay/FloatingBlob";
 import { CircleToSearchOverlay } from "@/components/overlay/CircleToSearchOverlay";
 import { agentService } from "@/lib/agentService";
 import { cn } from "@/lib/cn";
-import { useHudStore, useUiStore } from "@/store";
+import { useHudStore, useUiStore, useUtilityStore } from "@/store";
 import type { TabId } from "@/types";
 import HomePage from "@/pages/HomePage";
 import WorkspacePage from "@/pages/WorkspacePage";
+import GalaxyPage from "@/pages/GalaxyPage";
 import VideoStudioPage from "@/pages/VideoStudioPage";
-import SmartHomePage from "@/pages/SmartHomePage";
+import MediaHubPage from "@/pages/MediaHubPage";
+import DailyTasksPage from "@/pages/DailyTasksPage";
 import MemoryCalendarPage from "@/pages/MemoryCalendarPage";
 import PluginsPage from "@/pages/PluginsPage";
 import ProvidersBridgePage from "@/pages/ProvidersBridgePage";
 import CustomizePage from "@/pages/CustomizePage";
+import { NowPlayingDock } from "@/components/media/NowPlayingDock";
 
 const PAGES: Record<TabId, ComponentType> = {
   home: HomePage,
   workspace: WorkspacePage,
+  galaxy: GalaxyPage,
   video: VideoStudioPage,
-  smarthome: SmartHomePage,
+  media: MediaHubPage,
+  tasks: DailyTasksPage,
   memory: MemoryCalendarPage,
   skills: PluginsPage,
   providers: ProvidersBridgePage,
@@ -37,13 +43,30 @@ export default function App() {
   const hudGrid = useHudStore((s) => s.hudGrid);
   const applyActiveTheme = useHudStore((s) => s.applyActiveTheme);
   const syncFromServer = useHudStore((s) => s.syncFromServer);
+  const hasRunningClock = useUtilityStore(
+    (s) => s.stopwatchRunning || s.timers.some((t) => t.running),
+  );
   const Page = PAGES[activeTab] ?? HomePage;
 
   useEffect(() => {
     applyActiveTheme();
     void syncFromServer();
+    void useUtilityStore.getState().syncUtilities();
     agentService.init();
+
+    const remInterval = window.setInterval(() => {
+      void useUtilityStore.getState().syncUtilities();
+    }, 15_000);
+    return () => window.clearInterval(remInterval);
   }, [applyActiveTheme, syncFromServer]);
+
+  useEffect(() => {
+    if (!hasRunningClock) return;
+    const id = window.setInterval(() => {
+      useUtilityStore.getState().tick(Date.now());
+    }, 100);
+    return () => window.clearInterval(id);
+  }, [hasRunningClock]);
 
   return (
     <MotionConfig reducedMotion="user">
@@ -56,6 +79,7 @@ export default function App() {
           )}
         >
           <TitleBar />
+          <WbReminderAlertBanner />
           <div className="flex min-h-0 flex-1">
             <Sidebar />
             <main className="min-w-0 flex-1 pb-3 pr-3">
@@ -73,6 +97,7 @@ export default function App() {
             </main>
           </div>
         </div>
+        <NowPlayingDock />
         <FloatingBlob />
         <CircleToSearchOverlay />
         <ConfirmationDialog />

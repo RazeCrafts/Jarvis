@@ -21,18 +21,18 @@ function SidebarButton({
       aria-current={active ? "page" : undefined}
       title={tab.label}
       className={cn(
-        "group relative flex h-13 w-14 flex-col items-center justify-center gap-1 rounded-xl py-2 transition-colors",
+        "group relative flex h-11 w-14 flex-col items-center justify-center gap-0.5 rounded-xl py-1.5 transition-colors",
         active ? "bg-surface text-accent" : "text-fg-muted hover:bg-surface hover:text-fg",
       )}
     >
       {active && (
         <motion.span
           layoutId="rail-indicator"
-          className="absolute -left-1.5 bottom-2.5 top-2.5 w-0.5 rounded-full bg-accent"
+          className="absolute -left-1.5 bottom-2 top-2 w-0.5 rounded-full bg-accent"
           transition={{ type: "spring", stiffness: 500, damping: 38 }}
         />
       )}
-      <Icon size={19} strokeWidth={1.7} />
+      <Icon size={17} strokeWidth={1.7} />
       <span
         className={cn(
           "text-[9px] font-medium leading-none tracking-wide transition-colors",
@@ -50,8 +50,8 @@ export function Sidebar() {
   const setActiveTab = useUiStore((s) => s.setActiveTab);
 
   return (
-    <nav aria-label="Main" className="relative z-20 flex w-16 shrink-0 flex-col items-center justify-between pb-3 pt-1">
-      <div className="flex flex-col items-center gap-1">
+    <nav aria-label="Main" className="relative z-20 flex w-16 shrink-0 flex-col items-center justify-between pb-2.5 pt-1">
+      <div className="flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto overflow-x-hidden pr-0.5">
         {TABS.filter((t) => t.position === "top").map((tab) => (
           <SidebarButton
             key={tab.id}
@@ -62,7 +62,7 @@ export function Sidebar() {
         ))}
       </div>
 
-      <div className="flex flex-col items-center gap-1">
+      <div className="flex shrink-0 flex-col items-center gap-1 pt-1">
         {TABS.filter((t) => t.position === "bottom").map((tab) => (
           <SidebarButton
             key={tab.id}

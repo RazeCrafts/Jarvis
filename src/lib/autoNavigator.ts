@@ -18,12 +18,14 @@ export interface DetectedIntent {
 
 const TAB_PATTERNS: Array<{ tab: TabId; re: RegExp }> = [
   { tab: "video", re: /\b(video\s+(?:editing\s+)?studio|video\s+editor|edit(?:ing)?\s+(?:a\s+|the\s+|my\s+|these\s+)?(?:video|videos|clips?|footage|montage))\b/i },
+  { tab: "galaxy", re: /\b(file\s+galaxy|knowledge\s+galaxy|galaxy|brain\s+graph|vault)\b/i },
   { tab: "workspace", re: /\b(workshop|3d\s+(?:studio|printer|bench)|artifact\s+studio)\b/i },
-  { tab: "smarthome", re: /\b(smart\s*home|home\s+assistant|media\s+hub|watchdog)\b/i },
-  { tab: "memory", re: /\b(memory\s+wiki|memories|calendar|schedule|notebook|notes)\b/i },
+  { tab: "media", re: /\b(media\s+hub|movies?\s+and\s+music|music\s+hub|video\s+search|play\s+online)\b/i },
+  { tab: "tasks", re: /\b(daily\s+tasks?|routines?|scheduled\s+jobs?|cron\s+jobs?)\b/i },
+  { tab: "memory", re: /\b(memory\s+wiki|memories|calendar|schedule|notebook|notes|timers?|stopwatch|wb\s+remind(?:er)?s?)\b/i },
   { tab: "skills", re: /\b(skills?|plugins?|marketplace|mcp\s+servers?|toolsets?)\b/i },
   { tab: "providers", re: /\b(models?|providers?|desktop\s+bridge|messaging\s+bridge|gateway)\b/i },
-  { tab: "settings", re: /\b(settings?|themes?|customize|layout\s+preferences?)\b/i },
+  { tab: "settings", re: /\b(settings?|themes?|customize|layout\s+preferences?|connectors?|permissions?|keybinds?)\b/i },
   { tab: "home", re: /\b(command\s+hud|home\s+tab|main\s+hud)\b/i },
 ];
 

@@ -73,49 +73,14 @@ export interface CalendarEventItem {
   completed: boolean;
 }
 
-export interface SmartDeviceItem {
-  id: string;
-  name: string;
-  room: string;
-  type: "light" | "climate" | "lock" | "camera" | "speaker" | "sensor";
-  on: boolean;
-  level?: number;
-  targetTemp?: number;
-  currentTemp?: number;
-  statusText: string;
-}
-
-export interface SmartSceneItem {
-  id: string;
-  name: string;
-  description: string;
-  actions: Array<{ deviceId: string; on: boolean; level?: number; targetTemp?: number }>;
-}
-
-export interface SmartHomeState {
-  homeAssistantUrl: string;
-  homeAssistantConnected: boolean;
-  watchdogArmed?: boolean;
-  devices: SmartDeviceItem[];
-  scenes: SmartSceneItem[];
-}
-
 export interface AutomationRuleItem {
   id: string;
   name: string;
-  triggerType: "lock_unlocked_away" | "meeting_approaching" | "motion_detected" | "evening_hour";
+  triggerType: "meeting_approaching" | "morning_brief" | "evening_hour" | "cron";
   actionSummary: string;
-  targetSceneId?: string;
+  targetChannel?: string;
   enabled: boolean;
   lastTriggeredAt?: number;
-}
-
-export interface SecurityLogEntryItem {
-  id: string;
-  severity: "info" | "alert";
-  source: string;
-  message: string;
-  ts: number;
 }
 
 export interface GatewayMessageItem {
@@ -196,7 +161,7 @@ export interface CatalogPluginItem {
   id: string;
   name: string;
   version: string;
-  category: "Auth & Providers" | "Skills" | "Smart Home" | "Productivity" | "Media";
+  category: "Auth & Providers" | "Skills" | "Coding" | "Productivity" | "Media";
   description: string;
   sourceKind: "plugin_yaml" | "skill_md";
   requiresBridge: boolean;
@@ -457,27 +422,20 @@ export const agentApi = {
     request<{ ok: boolean }>(`/api/calendar/${encodeURIComponent(id)}`, { method: "DELETE" }),
   calendarIcsUrl: () => `${backendBaseUrl()}/api/calendar/export.ics`,
 
-  // Smart Home & Media Hub
-  getSmartHome: () => request<SmartHomeState>("/api/smarthome"),
-  controlSmartDevice: (id: string, payload: { on?: boolean; level?: number; targetTemp?: number }) =>
-    request<{ ok: boolean; device: SmartDeviceItem }>(`/api/smarthome/device/${encodeURIComponent(id)}`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-  activateSmartScene: (id: string) =>
-    request<{ ok: boolean; smartHome: SmartHomeState }>(`/api/smarthome/scene/${encodeURIComponent(id)}`, {
-      method: "POST",
-    }),
-  connectHomeAssistant: (url: string, token: string) =>
-    request<{ ok: boolean; connected: boolean; message: string }>("/api/smarthome/home-assistant", {
-      method: "POST",
-      body: JSON.stringify({ url, token }),
-    }),
+  // Online Movies & Music Media Hub
   getMediaHistory: () => request<{ items: MediaHistoryItem[] }>("/api/media"),
-  searchMedia: (query: string, kind: "video" | "music" = "video") =>
+  searchMedia: (query: string, kind: "movie" | "video" | "music" = "video") =>
     request<{
       ok: boolean;
       results: Array<{ title: string; channel: string; url: string; embedUrl?: string; snippet: string }>;
+      targets?: Array<{
+        id: string;
+        label: string;
+        category: string;
+        webUrl: string;
+        protocolUri?: string;
+        bridgeAppName?: string;
+      }>;
       history: MediaHistoryItem[];
     }>("/api/media/search", { method: "POST", body: JSON.stringify({ query, kind }) }),
 
@@ -570,34 +528,20 @@ export const agentApi = {
       briefing: {
         headline: string;
         period: "morning" | "afternoon" | "evening";
-        securityStatus: string;
+        workspaceStatus: string;
         upcomingCount: number;
         nextEventTitle: string | null;
         pinnedFocus: string[];
         alerts: string[];
         suggestedPrompt: string;
       };
-      triggeredAutomations: Array<{ ruleId: string; ruleName: string; message: string; targetSceneId?: string }>;
+      triggeredAutomations: Array<{ ruleId: string; ruleName: string; message: string; targetChannel?: string }>;
     }>("/api/briefing"),
-  getWatchdogState: () =>
-    request<{ watchdogArmed: boolean; securityLog: SecurityLogEntryItem[]; automations: AutomationRuleItem[] }>(
-      "/api/smarthome/watchdog",
-    ),
-  toggleWatchdog: (armed?: boolean) =>
-    request<{ ok: boolean; watchdogArmed: boolean; securityLog: SecurityLogEntryItem[] }>(
-      "/api/smarthome/watchdog/toggle",
-      { method: "POST", body: JSON.stringify(typeof armed === "boolean" ? { armed } : {}) },
-    ),
-  logWatchdogEvent: (payload: { source?: string; message?: string; severity?: "info" | "alert" }) =>
-    request<{ ok: boolean; entry: SecurityLogEntryItem; securityLog: SecurityLogEntryItem[] }>(
-      "/api/smarthome/watchdog/event",
-      { method: "POST", body: JSON.stringify(payload) },
-    ),
   createAutomation: (payload: {
     name: string;
     triggerType: AutomationRuleItem["triggerType"];
     actionSummary: string;
-    targetSceneId?: string;
+    targetChannel?: string;
   }) => request<{ ok: boolean; item: AutomationRuleItem }>("/api/automations", { method: "POST", body: JSON.stringify(payload) }),
   toggleAutomation: (id: string, enabled: boolean) =>
     request<{ ok: boolean; item: AutomationRuleItem }>(`/api/automations/${encodeURIComponent(id)}`, {
@@ -607,7 +551,7 @@ export const agentApi = {
   deleteAutomation: (id: string) =>
     request<{ ok: boolean }>(`/api/automations/${encodeURIComponent(id)}`, { method: "DELETE" }),
   evaluateAutomations: () =>
-    request<{ ok: boolean; triggered: Array<{ ruleId: string; ruleName: string; message: string; targetSceneId?: string }> }>(
+    request<{ ok: boolean; triggered: Array<{ ruleId: string; ruleName: string; message: string; targetChannel?: string }> }>(
       "/api/automations/evaluate",
       { method: "POST" },
     ),
@@ -862,4 +806,147 @@ export const agentApi = {
       method: "POST",
       body: JSON.stringify({ text }),
     }),
+  aiAnalyzeVideoEdit: (payload: {
+    instruction: string;
+    clips: Array<{
+      index: number;
+      name: string;
+      duration: number;
+      trimStart: number;
+      trimEnd: number;
+      speed: number;
+      mediaType?: string;
+    }>;
+    frames: Array<{ clipIndex: number; timestampSec: number; imageBase64: string }>;
+    beatInfo: { bpm: number; beats: number[]; musicName?: string };
+  }) =>
+    request<{
+      ok: boolean;
+      via: "gemini-vision" | "beat-heuristic";
+      frameInsights: string;
+      plan: Record<string, unknown>;
+    }>("/api/video/ai-analyze-edit", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  // File Galaxy & Butler Brain
+  getGalaxy: () =>
+    request<{
+      graph: import("@/lib/fileGalaxy").GalaxyGraph;
+      vaultFiles: import("@/lib/fileGalaxy").WorkspaceVaultFile[];
+      stats: { notes: number; memories: number; files: number; totalNodes: number; edges: number };
+    }>("/api/galaxy"),
+  uploadGalaxyFile: (payload: {
+    name: string;
+    mimeType: string;
+    sizeBytes: number;
+    textPreview?: string;
+    dataUrl?: string;
+    tags?: string[];
+  }) =>
+    request<{ ok: boolean; file: import("@/lib/fileGalaxy").WorkspaceVaultFile; nodeId: string }>(
+      "/api/galaxy/files",
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+  deleteGalaxyFile: (id: string) =>
+    request<{ ok: boolean }>(`/api/galaxy/files/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  rememberInGalaxy: (text: string, tags?: string[]) =>
+    request<{
+      ok: boolean;
+      note: PersonalNoteItem;
+      nodeId: string;
+      graph: import("@/lib/fileGalaxy").GalaxyGraph;
+    }>("/api/galaxy/remember", { method: "POST", body: JSON.stringify({ text, tags }) }),
+  askGalaxyBrain: (question: string) =>
+    request<{
+      ok: boolean;
+      answer: string;
+      cameraAction: import("@/lib/fileGalaxy").BrainCameraAction;
+      focusNodeId: string | null;
+      litNodeIds: string[];
+      neighborNodeIds: string[];
+      sources: Array<{ id: string; title: string; kind: string; score: number }>;
+    }>("/api/galaxy/ask", { method: "POST", body: JSON.stringify({ question }) }),
+
+  // Workbench Sticky Reminders & Timers
+  getUtilities: () =>
+    request<{
+      wbReminders: import("@/lib/timersAndReminders").WbReminder[];
+      timers: import("@/lib/timersAndReminders").CountdownTimer[];
+    }>("/api/utilities"),
+  createWbReminder: (payload: {
+    title: string;
+    dueAt?: number;
+    priority?: "low" | "normal" | "urgent";
+    notes?: string;
+  }) =>
+    request<{
+      ok: boolean;
+      item: import("@/lib/timersAndReminders").WbReminder;
+      items: import("@/lib/timersAndReminders").WbReminder[];
+    }>("/api/utilities/reminders", { method: "POST", body: JSON.stringify(payload) }),
+  updateWbReminder: (
+    id: string,
+    payload: { status?: string; dueAt?: number; title?: string },
+  ) =>
+    request<{
+      ok: boolean;
+      item: import("@/lib/timersAndReminders").WbReminder;
+      items: import("@/lib/timersAndReminders").WbReminder[];
+    }>(`/api/utilities/reminders/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  deleteWbReminder: (id: string) =>
+    request<{ ok: boolean; items: import("@/lib/timersAndReminders").WbReminder[] }>(
+      `/api/utilities/reminders/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    ),
+  saveTimers: (timers: import("@/lib/timersAndReminders").CountdownTimer[]) =>
+    request<{ ok: boolean; timers: import("@/lib/timersAndReminders").CountdownTimer[] }>(
+      "/api/utilities/timers",
+      { method: "POST", body: JSON.stringify({ timers }) },
+    ),
+
+  // Workshop Vision-to-3D, Studio Finish & Surgical Part Edit + Cost Receipt
+  workshopVisionTo3D: (payload: { imageBase64: string; mimeType: string; hint?: string }) =>
+    request<{
+      ok: boolean;
+      title?: string;
+      code?: string;
+      artifact?: WorkspaceArtifact;
+      isFloorPlan?: boolean;
+      error?: string;
+    }>("/api/workshop/vision", { method: "POST", body: JSON.stringify(payload) }),
+  workshopFinish: (payload: {
+    imageDataUrl: string;
+    mode: "photograph" | "miniature";
+    title: string;
+    exploded?: boolean;
+  }) =>
+    request<{
+      ok: boolean;
+      imageDataUrl?: string;
+      model?: string;
+      error?: string;
+    }>("/api/workshop/finish", { method: "POST", body: JSON.stringify(payload) }),
+  workshopPartEdit: (payload: { artifactId: string; partName: string; instruction: string }) =>
+    request<{
+      ok: boolean;
+      artifact?: WorkspaceArtifact;
+      error?: string;
+    }>("/api/workshop/part-edit", { method: "POST", body: JSON.stringify(payload) }),
+  getWorkshopReceipt: () =>
+    request<{
+      summary: {
+        totalUsd: number;
+        callCount: number;
+        totalInputTokens: number;
+        totalOutputTokens: number;
+        imageCount: number;
+        formattedTotal: string;
+      };
+      entries: import("@/lib/workshopProtocol").ApiCostEntry[];
+    }>("/api/workshop/receipt"),
 };

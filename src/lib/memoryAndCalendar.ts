@@ -33,19 +33,11 @@ export interface CalendarEvent {
 export interface AutomationRule {
   id: string;
   name: string;
-  triggerType: "lock_unlocked_away" | "meeting_approaching" | "motion_detected" | "evening_hour";
+  triggerType: "meeting_approaching" | "morning_brief" | "evening_hour" | "cron";
   actionSummary: string;
-  targetSceneId?: string;
+  targetChannel?: string;
   enabled: boolean;
   lastTriggeredAt?: number;
-}
-
-export interface SecurityLogEntry {
-  id: string;
-  severity: "info" | "alert";
-  source: string;
-  message: string;
-  ts: number;
 }
 
 export interface WikiSection {
@@ -67,7 +59,7 @@ export interface WikiSection {
 export interface ProactiveBriefing {
   headline: string;
   period: "morning" | "afternoon" | "evening";
-  securityStatus: string;
+  workspaceStatus: string;
   upcomingCount: number;
   nextEventTitle: string | null;
   pinnedFocus: string[];
@@ -228,32 +220,18 @@ export function buildMemoryWiki(memories: PersonalMemory[], notes: PersonalNote[
 }
 
 /**
- * Evaluates condition-triggered smart-home / calendar automation rules safely.
+ * Evaluates condition-triggered calendar & workspace automation rules safely.
  */
 export function evaluateAutomationRules(
   rules: AutomationRule[],
-  devices: Array<{ id: string; name: string; type: string; on: boolean; statusText: string }>,
   calendar: CalendarEvent[],
-  watchdogArmed: boolean,
   nowMs = Date.now(),
-): Array<{ ruleId: string; ruleName: string; message: string; targetSceneId?: string }> {
-  const triggered: Array<{ ruleId: string; ruleName: string; message: string; targetSceneId?: string }> = [];
+): Array<{ ruleId: string; ruleName: string; message: string; targetChannel?: string }> {
+  const triggered: Array<{ ruleId: string; ruleName: string; message: string; targetChannel?: string }> = [];
   const hour = new Date(nowMs).getHours();
 
   for (const rule of rules) {
     if (!rule.enabled) continue;
-
-    if (rule.triggerType === "lock_unlocked_away" && watchdogArmed) {
-      const unlocked = devices.find((d) => d.type === "lock" && !d.on);
-      if (unlocked) {
-        triggered.push({
-          ruleId: rule.id,
-          ruleName: rule.name,
-          message: `Watchdog alert: ${unlocked.name} is unlocked while Watchdog Mode is armed.`,
-          targetSceneId: rule.targetSceneId,
-        });
-      }
-    }
 
     if (rule.triggerType === "meeting_approaching") {
       const soon = calendar.find((ev) => {
@@ -268,9 +246,18 @@ export function evaluateAutomationRules(
           ruleId: rule.id,
           ruleName: rule.name,
           message: `Upcoming schedule trigger: "${soon.title}" starts within 30 minutes.`,
-          targetSceneId: rule.targetSceneId,
+          targetChannel: rule.targetChannel,
         });
       }
+    }
+
+    if (rule.triggerType === "morning_brief" && hour >= 7 && hour < 12) {
+      triggered.push({
+        ruleId: rule.id,
+        ruleName: rule.name,
+        message: `Morning briefing (${hour}:00) ready: ${rule.actionSummary}`,
+        targetChannel: rule.targetChannel,
+      });
     }
 
     if (rule.triggerType === "evening_hour" && hour >= 20) {
@@ -278,7 +265,7 @@ export function evaluateAutomationRules(
         ruleId: rule.id,
         ruleName: rule.name,
         message: `Evening routine (${hour}:00) ready: ${rule.actionSummary}`,
-        targetSceneId: rule.targetSceneId,
+        targetChannel: rule.targetChannel,
       });
     }
   }
@@ -287,15 +274,13 @@ export function evaluateAutomationRules(
 }
 
 /**
- * Synthesizes a deterministic proactive butler briefing from current life state.
+ * Synthesizes a deterministic proactive butler briefing from current life & workspace state.
  */
 export function buildProactiveBriefing(input: {
   userTitle?: string;
   memories: PersonalMemory[];
   calendar: CalendarEvent[];
-  devices: Array<{ type: string; on: boolean; name: string }>;
-  watchdogArmed: boolean;
-  securityAlertsCount?: number;
+  activeRoutinesCount?: number;
   nowMs?: number;
 }): ProactiveBriefing {
   const nowMs = input.nowMs ?? Date.now();
@@ -306,14 +291,8 @@ export function buildProactiveBriefing(input: {
 
   const upcoming = sortUpcomingEvents(input.calendar, nowMs).filter((e) => !e.completed);
   const nextEvent = upcoming[0] ?? null;
-
-  const unlockedCount = input.devices.filter((d) => d.type === "lock" && !d.on).length;
-  const activeLights = input.devices.filter((d) => d.type === "light" && d.on).length;
-  const securityStatus = input.watchdogArmed
-    ? unlockedCount > 0
-      ? `Watchdog Armed · ${unlockedCount} lock open`
-      : "Watchdog Armed · Perimeter secure"
-    : `${activeLights} lights active · ${unlockedCount === 0 ? "Locks secure" : `${unlockedCount} lock unlocked`}`;
+  const routinesCount = input.activeRoutinesCount ?? 0;
+  const workspaceStatus = `${routinesCount} active routine${routinesCount === 1 ? "" : "s"} · ${input.memories.length} memories indexed`;
 
   const pinnedFocus = searchMemories(input.memories, "")
     .filter((m) => m.pinned)
@@ -321,25 +300,19 @@ export function buildProactiveBriefing(input: {
     .map((m) => m.title);
 
   const alerts: string[] = [];
-  if (input.watchdogArmed && unlockedCount > 0) {
-    alerts.push(`${unlockedCount} smart lock is unlocked while Watchdog Mode is active.`);
-  }
-  if ((input.securityAlertsCount || 0) > 0) {
-    alerts.push(`${input.securityAlertsCount} recent home security event logged.`);
-  }
   if (nextEvent) {
     alerts.push(`Next on schedule: ${nextEvent.title}`);
   }
 
   return {
-    headline: `Good ${period}, ${userTitle}. ${upcoming.length} pending event${upcoming.length === 1 ? "" : "s"} · ${securityStatus}.`,
+    headline: `Good ${period}, ${userTitle}. ${upcoming.length} pending event${upcoming.length === 1 ? "" : "s"} · ${workspaceStatus}.`,
     period,
-    securityStatus,
+    workspaceStatus,
     upcomingCount: upcoming.length,
     nextEventTitle: nextEvent ? nextEvent.title : null,
     pinnedFocus,
     alerts,
     suggestedPrompt:
-      "Deliver a full proactive briefing of my schedule, pinned focus items, and home status with a live visual summary chart.",
+      "Deliver a concise proactive briefing of my schedule, pinned focus items, and active routines.",
   };
 }

@@ -12,7 +12,8 @@
  * ``speechSynthesis`` exposes no amplitude data.
  */
 
-import { useChatStore } from "@/store";
+import { useAudioControlStore, useChatStore } from "@/store";
+import { isMuteFlagActive } from "@/lib/voiceBuffer";
 
 export const ttsSupported = typeof window !== "undefined" && "speechSynthesis" in window;
 
@@ -71,14 +72,15 @@ function pickVoice(): SpeechSynthesisVoice | null {
 
 /**
  * Speak `text` aloud. Resolves when speech finishes (or immediately errors).
- * While speaking, chatStore.isSpeaking is true and a synthetic audio envelope
- * animates the orb.
+ * Honors `?mute=1` URL flag and Master/Voice volume mixer.
  */
 export function speak(
   text: string,
   opts: { rate?: number; pitch?: number; volume?: number } = {},
 ): Promise<void> {
-  if (!ttsSupported || !text.trim()) return Promise.resolve();
+  if (!ttsSupported || !text.trim() || isMuteFlagActive()) return Promise.resolve();
+  const effectiveVol = useAudioControlStore.getState().effectiveVoiceVolume();
+  if (effectiveVol <= 0) return Promise.resolve();
   stopSpeaking();
 
   return new Promise((resolve) => {
@@ -88,7 +90,7 @@ export function speak(
     if (voice) utterance.voice = voice;
     utterance.rate = opts.rate ?? 0.98;
     utterance.pitch = opts.pitch ?? 0.85;
-    utterance.volume = opts.volume ?? 1;
+    utterance.volume = Math.max(0, Math.min(1, (opts.volume ?? 1) * effectiveVol));
 
     const finish = () => {
       if (levelTimer !== null) {

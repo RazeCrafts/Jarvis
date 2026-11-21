@@ -14,10 +14,21 @@ import {
   handleWake,
 } from "@/lib/voiceController";
 import { speak, stopSpeaking } from "@/lib/voiceEngine";
-import { useAgentStore, useChatStore, useHudStore, useLifeStore, useUiStore, useVideoStore, useWorkspaceStore } from "@/store";
+import {
+  useAgentStore,
+  useChatStore,
+  useHudStore,
+  useLifeStore,
+  usePlayerStore,
+  useUiStore,
+  useUtilityStore,
+  useVideoStore,
+  useWorkspaceStore,
+} from "@/store";
 import { websocketService, type ConnectionStatus, type WsEvent } from "@/lib/websocketService";
 import type { LiveVisualSpec, TabId, WebCitation } from "@/types";
 import type { VideoEditDirective } from "@/lib/autoNavigator";
+import type { MediaLaunchBundle } from "@/lib/mediaIntent";
 
 export interface TtsPrefs {
   enabled: boolean;
@@ -48,6 +59,7 @@ class AgentService {
   private sawArtifact = false;
   private pendingVisuals: LiveVisualSpec[] = [];
   private pendingCitations: WebCitation[] = [];
+  private pendingMediaCard: MediaLaunchBundle | null = null;
   private repaired = new Set<string>();
   private unsubscribe: (() => void) | null = null;
 
@@ -131,7 +143,6 @@ class AgentService {
           domain === "memories" ||
           domain === "notes" ||
           domain === "calendar" ||
-          domain === "smarthome" ||
           domain === "media"
         ) {
           void useLifeStore.getState().refreshDomain(domain);
@@ -152,6 +163,10 @@ class AgentService {
         if (this.pendingCitations.length > 0) {
           chat.attachCitationsToMessage(id, this.pendingCitations, eventSessionId);
           this.pendingCitations = [];
+        }
+        if (this.pendingMediaCard) {
+          chat.attachMediaCardToMessage(id, this.pendingMediaCard, eventSessionId);
+          this.pendingMediaCard = null;
         }
         chat.appendToMessage(id, String(event.content ?? ""), eventSessionId);
         break;
@@ -238,6 +253,48 @@ class AgentService {
         if (data.action === "stage_control" && typeof data.command === "string") {
           window.dispatchEvent(new CustomEvent("jarvis-stage-command", { detail: data.command }));
         }
+        if (data.action === "galaxy_birth") {
+          void useLifeStore.getState().refreshDomain("notes");
+          window.dispatchEvent(new CustomEvent("jarvis-galaxy-birth", { detail: data }));
+        }
+        if (data.action === "utility_stopwatch" && typeof data.stopwatchAction === "string") {
+          useUtilityStore
+            .getState()
+            .handleStopwatchCommand(
+              data.stopwatchAction as "start" | "pause" | "reset" | "lap",
+            );
+        }
+        if (data.action === "utility_timer" && data.timer && typeof data.timer === "object") {
+          const t = data.timer as { label?: string; durationMs?: number };
+          if (typeof t.durationMs === "number" && t.durationMs > 0) {
+            useUtilityStore.getState().addTimer(t.label || "Timer", t.durationMs);
+          }
+        }
+        if (data.action === "utility_reminder") {
+          void useUtilityStore.getState().syncUtilities();
+        }
+        if (data.action === "media_play" && data.media && typeof data.media === "object") {
+          const bundle = data.media as MediaLaunchBundle;
+          if (this.streamingId) {
+            chat.attachMediaCardToMessage(this.streamingId, bundle, eventSessionId);
+          } else {
+            this.pendingMediaCard = bundle;
+          }
+          if (bundle.playableInSite) {
+            usePlayerStore.getState().openItem({
+              id: bundle.id,
+              title: bundle.title,
+              kind: bundle.kind,
+              source: bundle.localDataUrl ? "local" : "online",
+              watchUrl: bundle.watchUrl,
+              embedUrl: bundle.embedUrl,
+              localSrc: bundle.localDataUrl,
+              mimeType: bundle.mimeType,
+              channel: bundle.channel,
+              targets: bundle.targets,
+            });
+          }
+        }
         break;
       }
 
@@ -263,12 +320,20 @@ class AgentService {
               chat.attachCitationsToMessage(this.streamingId, this.pendingCitations, eventSessionId);
               this.pendingCitations = [];
             }
+            if (this.pendingMediaCard) {
+              chat.attachMediaCardToMessage(this.streamingId, this.pendingMediaCard, eventSessionId);
+              this.pendingMediaCard = null;
+            }
             chat.finishMessage(this.streamingId, eventSessionId);
           }
-        } else if (this.pendingVisuals.length > 0) {
+        } else if (this.pendingVisuals.length > 0 || this.pendingMediaCard) {
           const id = chat.addMessage("assistant", "", false, eventSessionId);
           for (const v of this.pendingVisuals) chat.attachVisualToMessage(id, v, eventSessionId);
           this.pendingVisuals = [];
+          if (this.pendingMediaCard) {
+            chat.attachMediaCardToMessage(id, this.pendingMediaCard, eventSessionId);
+            this.pendingMediaCard = null;
+          }
         }
 
         const full = String(event.fullResponse ?? "");
@@ -297,10 +362,21 @@ class AgentService {
     this.gotTokens = false;
     this.pendingVisuals = [];
     this.pendingCitations = [];
+    this.pendingMediaCard = null;
     useAgentStore.getState().setThinking(false);
   }
 
-  send(text: string, model?: string): void {
+  send(
+    text: string,
+    model?: string,
+    attachments?: Array<{
+      name: string;
+      mimeType: string;
+      kind?: string;
+      dataBase64?: string;
+      textContent?: string;
+    }>,
+  ): void {
     const trimmed = text.trim();
     if (!trimmed) return;
     stopSpeaking();
@@ -323,6 +399,7 @@ class AgentService {
       sessionId,
       history: recentHistory,
       content: trimmed,
+      ...(attachments?.length ? { attachments } : {}),
       ...(model ? { model } : {}),
     });
   }

@@ -1,9 +1,11 @@
 import {
   Box,
+  CalendarClock,
   CalendarDays,
   Cpu,
   Film,
-  Home,
+  Music,
+  Network,
   Orbit,
   Puzzle,
   SlidersHorizontal,
@@ -22,10 +24,12 @@ export interface TabDef {
 export const TABS: TabDef[] = [
   { id: "home", label: "Command HUD", shortLabel: "HUD", icon: Orbit, position: "top" },
   { id: "workspace", label: "Workshop", shortLabel: "Workshop", icon: Box, position: "top" },
+  { id: "galaxy", label: "File Galaxy & Brain", shortLabel: "Galaxy", icon: Network, position: "top" },
   { id: "video", label: "Video Studio", shortLabel: "Video", icon: Film, position: "top" },
-  { id: "smarthome", label: "Smart Home", shortLabel: "Home", icon: Home, position: "top" },
-  { id: "memory", label: "Memory & Cal", shortLabel: "Memory", icon: CalendarDays, position: "top" },
+  { id: "media", label: "Movies & Music", shortLabel: "Media", icon: Music, position: "top" },
+  { id: "tasks", label: "Daily Tasks", shortLabel: "Tasks", icon: CalendarClock, position: "top" },
+  { id: "memory", label: "Memory, Cal & Timers", shortLabel: "Memory", icon: CalendarDays, position: "top" },
   { id: "skills", label: "Plugins & Skills", shortLabel: "Plugins", icon: Puzzle, position: "top" },
   { id: "providers", label: "Models & Bridge", shortLabel: "Models", icon: Cpu, position: "top" },
-  { id: "settings", label: "Customize", shortLabel: "Customize", icon: SlidersHorizontal, position: "bottom" },
+  { id: "settings", label: "Settings", shortLabel: "Settings", icon: SlidersHorizontal, position: "bottom" },
 ];

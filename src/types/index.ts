@@ -1,8 +1,12 @@
+import type { MediaLaunchBundle } from "@/lib/mediaIntent";
+
 export type TabId =
   | "home"
   | "workspace"
+  | "galaxy"
   | "video"
-  | "smarthome"
+  | "media"
+  | "tasks"
   | "memory"
   | "skills"
   | "providers"
@@ -61,6 +65,7 @@ export interface ChatMessage {
   streaming?: boolean;
   visuals?: LiveVisualSpec[];
   citations?: WebCitation[];
+  mediaCard?: MediaLaunchBundle;
 }
 
 export interface ChatSession {

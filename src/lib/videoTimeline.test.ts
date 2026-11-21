@@ -9,6 +9,7 @@ import {
   formatTimecode,
   generateTimedCaptions,
   moveClip,
+  resolveTimelineClipAt,
   splitClipAtSourceTime,
   totalTimelineDuration,
 } from "./videoTimeline";
@@ -22,6 +23,19 @@ test("computes effective duration with trim and speed", () => {
   };
   assert.equal(clipEffectiveDuration(clip), 3);
   assert.equal(totalTimelineDuration([clip, clip]), 6);
+});
+
+test("resolveTimelineClipAt maps continuous timeline time across multiple clips", () => {
+  const c1 = { ...createDefaultClip({ id: "c1", name: "Clip 1", src: "", duration: 4 }), trimEnd: 3 };
+  const c2 = { ...createDefaultClip({ id: "c2", name: "Clip 2", src: "", duration: 6 }), trimStart: 1, trimEnd: 5, speed: 2 };
+  // c1 takes 3s (0..3), c2 takes (5-1)/2 = 2s (3..5)
+  const at1 = resolveTimelineClipAt([c1, c2], 1.5);
+  assert.equal(at1.clipIndex, 0);
+  assert.equal(at1.sourceTime, 1.5);
+
+  const at4 = resolveTimelineClipAt([c1, c2], 4.0);
+  assert.equal(at4.clipIndex, 1);
+  assert.equal(at4.sourceTime, 3.0);
 });
 
 test("splits clip cleanly at source timestamp without dropping frames", () => {

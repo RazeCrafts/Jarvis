@@ -19,7 +19,24 @@ export interface JarvisTheme {
 }
 
 export const JARVIS_THEMES: JarvisTheme[] = [
-  // ---------- Stark HUD (10) ----------
+  // ---------- Stark HUD (11) ----------
+  {
+    id: "golden-hologram",
+    name: "Golden Holographic Core",
+    category: "Stark HUD",
+    isDark: true,
+    background: "#090b0e",
+    surface: "#11141a",
+    elevated: "#171c24",
+    border: "#262b36",
+    accent: "#f5b85c",
+    accentSoft: "#d97706",
+    accentGlow: "rgba(245, 184, 92, 0.28)",
+    fg: "#f4f1ea",
+    fgMuted: "#9b968c",
+    orbPrimary: "#f5b85c",
+    orbSecondary: "#fde68a",
+  },
   {
     id: "arc-titanium",
     name: "Arc Titanium HUD",

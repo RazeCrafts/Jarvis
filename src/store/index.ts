@@ -1,8 +1,11 @@
-export { useUiStore } from "./uiStore";
 export { useAgentStore } from "./agentStore";
+export { useAudioControlStore } from "./audioControlStore";
 export { useChatStore } from "./chatStore";
-export { useOrbStore } from "./orbStore";
-export { useWorkspaceStore } from "./workspaceStore";
 export { useHudStore } from "./hudStore";
 export { useLifeStore } from "./lifeStore";
+export { useOrbStore } from "./orbStore";
+export { usePlayerStore, type MediaDeckItem } from "./playerStore";
+export { useUiStore } from "./uiStore";
+export { useUtilityStore } from "./utilityStore";
 export { useVideoStore } from "./videoStore";
+export { useWorkspaceStore } from "./workspaceStore";

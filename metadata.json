@@ -1,6 +1,6 @@
 {
   "name": "JARVIS",
-  "description": "Personal AI butler HUD with 40 themes, reactive 3D core, live graphs, video studio, screen vision, smart home control, memory & calendar, and universal plugin support.",
+  "description": "Desktop-first autonomous AI workstation with multi-LLM Auto-Router, Hermes skills & plugins, coding engine, live artifacts, 3D holographic visualizer, File Galaxy, Video Studio, and Google Workspace/GitHub connectors.",
   "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

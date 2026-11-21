@@ -3,28 +3,52 @@ import { persist } from "zustand/middleware";
 import { applyThemeToDocument, getThemeById } from "@/lib/themes";
 import { agentApi, type HudConfig, type PersonaConfig } from "@/lib/agentApi";
 
-export type HudWidgetId = "core" | "schedule" | "memories" | "smarthome" | "media";
+export type HudWidgetId = "core" | "schedule" | "memories" | "media";
+export type ResponseMode = "butler" | "deep";
+
+export interface GlassFogConfig {
+  enabled: boolean;
+  panelBlurPx: number;
+  panelOpacity: number;
+  buttonBlurPx: number;
+  buttonOpacity: number;
+  galaxyBlurPx: number;
+  galaxyOpacity: number;
+  blobOpacity: number;
+}
+
+export const DEFAULT_GLASS_FOG: GlassFogConfig = {
+  enabled: false,
+  panelBlurPx: 14,
+  panelOpacity: 0.84,
+  buttonBlurPx: 8,
+  buttonOpacity: 0.9,
+  galaxyBlurPx: 12,
+  galaxyOpacity: 0.82,
+  blobOpacity: 0.94,
+};
 
 export const DEFAULT_HUD: HudConfig = {
-  themeId: "arc-titanium",
+  themeId: "golden-hologram",
   customAccent: "",
   borderRadius: 14,
   compactMode: false,
-  visibleWidgets: ["core", "schedule", "memories", "smarthome", "media"],
+  visibleWidgets: ["core", "schedule", "memories", "media"],
 };
 
 export const DEFAULT_PERSONA: PersonaConfig = {
   assistantName: "JARVIS",
   userTitle: "Sir",
   witLevel: "balanced",
-  conciseness: "detailed",
+  conciseness: "brief",
   proactiveMemory: true,
   liveGraphsByDefault: true,
   systemDirectives:
-    "You are JARVIS, a refined, hyper-competent British personal butler and engineering confidant. Anticipate needs, explain complex systems clearly with live visual diagrams when helpful, and remember personal details the user shares.",
+    "You are JARVIS, a refined, hyper-competent British personal butler and autonomous engineering workstation. Keep Butler Mode replies crisp and conversational; expand deeply in Full Text Agent Mode.",
 };
 
 export type CloseBehavior = "blob" | "confirm";
+export type HudSectionId = "core" | "chat" | "dock";
 
 interface HudState extends HudConfig {
   persona: PersonaConfig;
@@ -37,6 +61,11 @@ interface HudState extends HudConfig {
   closeBehavior: CloseBehavior;
   visualizerAbilities: boolean;
   blobPos: { x: number; y: number };
+  responseMode: ResponseMode;
+  layoutEditMode: boolean;
+  sectionOrder: HudSectionId[];
+  glassFog: GlassFogConfig;
+  blobAvatarUrl: string;
   setThemeId: (themeId: string) => void;
   setCustomAccent: (customAccent: string) => void;
   setBorderRadius: (borderRadius: number) => void;
@@ -49,8 +78,14 @@ interface HudState extends HudConfig {
   setCloseBehavior: (behavior: CloseBehavior) => void;
   setVisualizerAbilities: (enabled: boolean) => void;
   setBlobPos: (pos: { x: number; y: number }) => void;
+  setResponseMode: (mode: ResponseMode) => void;
+  setLayoutEditMode: (editing: boolean) => void;
+  setSectionOrder: (order: HudSectionId[]) => void;
+  updateGlassFog: (patch: Partial<GlassFogConfig>) => void;
+  setBlobAvatarUrl: (url: string) => void;
   toggleWidget: (id: HudWidgetId) => void;
   moveWidget: (id: HudWidgetId, dir: -1 | 1) => void;
+  reorderWidgets: (next: HudWidgetId[]) => void;
   setDockOpen: (open: boolean) => void;
   updatePersona: (patch: Partial<PersonaConfig>) => void;
   applyActiveTheme: () => void;
@@ -60,6 +95,22 @@ interface HudState extends HudConfig {
 }
 
 const clampWidth = (v: number, min = 220, max = 460) => Math.max(min, Math.min(max, Math.round(v)));
+
+function applyGlassFogCss(fog: GlassFogConfig): void {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  if (!fog.enabled) {
+    root.style.setProperty("--jarvis-panel-blur", "0px");
+    root.style.setProperty("--jarvis-panel-opacity", "1");
+    root.style.setProperty("--jarvis-btn-blur", "0px");
+    root.style.setProperty("--jarvis-btn-opacity", "1");
+    return;
+  }
+  root.style.setProperty("--jarvis-panel-blur", `${fog.panelBlurPx}px`);
+  root.style.setProperty("--jarvis-panel-opacity", String(fog.panelOpacity));
+  root.style.setProperty("--jarvis-btn-blur", `${fog.buttonBlurPx}px`);
+  root.style.setProperty("--jarvis-btn-opacity", String(fog.buttonOpacity));
+}
 
 export const useHudStore = create<HudState>()(
   persist(
@@ -75,6 +126,11 @@ export const useHudStore = create<HudState>()(
       closeBehavior: "blob",
       visualizerAbilities: true,
       blobPos: { x: 24, y: 24 },
+      responseMode: "butler",
+      layoutEditMode: false,
+      sectionOrder: ["core", "chat", "dock"],
+      glassFog: DEFAULT_GLASS_FOG,
+      blobAvatarUrl: "",
 
       applyActiveTheme: () => {
         const s = get();
@@ -83,6 +139,7 @@ export const useHudStore = create<HudState>()(
           customAccent: s.customAccent,
           borderRadius: s.borderRadius,
         });
+        applyGlassFogCss(s.glassFog);
         if (typeof document !== "undefined") {
           document.documentElement.style.fontSize = `${Math.round(16 * s.hudScale)}px`;
         }
@@ -123,6 +180,26 @@ export const useHudStore = create<HudState>()(
       setCloseBehavior: (closeBehavior) => set({ closeBehavior }),
       setVisualizerAbilities: (visualizerAbilities) => set({ visualizerAbilities }),
       setBlobPos: (blobPos) => set({ blobPos }),
+      setResponseMode: (responseMode) => {
+        set((s) => ({
+          responseMode,
+          persona: {
+            ...s.persona,
+            conciseness: responseMode === "butler" ? "brief" : "detailed",
+          },
+        }));
+        void get().persistToServer();
+      },
+      setLayoutEditMode: (layoutEditMode) => set({ layoutEditMode }),
+      setSectionOrder: (sectionOrder) => set({ sectionOrder }),
+      updateGlassFog: (patch) => {
+        set((s) => {
+          const next = { ...s.glassFog, ...patch };
+          applyGlassFogCss(next);
+          return { glassFog: next };
+        });
+      },
+      setBlobAvatarUrl: (blobAvatarUrl) => set({ blobAvatarUrl }),
 
       toggleWidget: (id) => {
         const current = get().visibleWidgets;
@@ -144,6 +221,11 @@ export const useHudStore = create<HudState>()(
         void get().persistToServer();
       },
 
+      reorderWidgets: (next) => {
+        set({ visibleWidgets: next });
+        void get().persistToServer();
+      },
+
       setDockOpen: (dockOpen) => set({ dockOpen }),
 
       updatePersona: (patch) => {
@@ -154,9 +236,13 @@ export const useHudStore = create<HudState>()(
       syncFromServer: async () => {
         try {
           const res = await agentApi.getHudPersona();
+          const incomingWidgets = Array.isArray(res.hud?.visibleWidgets)
+            ? res.hud.visibleWidgets.filter((w) => w !== "smarthome")
+            : undefined;
           set((s) => ({
             ...s,
             ...(res.hud || {}),
+            ...(incomingWidgets ? { visibleWidgets: incomingWidgets } : {}),
             persona: { ...s.persona, ...(res.persona || {}) },
           }));
           get().applyActiveTheme();
@@ -187,7 +273,7 @@ export const useHudStore = create<HudState>()(
         set({
           ...DEFAULT_HUD,
           persona: DEFAULT_PERSONA,
-          coreWidthPx: 280,
+          coreWidthPx: 304,
           dockWidthPx: 300,
           hudScale: 1,
           hudGrid: true,
@@ -195,6 +281,11 @@ export const useHudStore = create<HudState>()(
           closeBehavior: "blob",
           visualizerAbilities: true,
           blobPos: { x: 24, y: 24 },
+          responseMode: "butler",
+          layoutEditMode: false,
+          sectionOrder: ["core", "chat", "dock"],
+          glassFog: DEFAULT_GLASS_FOG,
+          blobAvatarUrl: "",
         });
         get().applyActiveTheme();
         void get().persistToServer();
@@ -202,30 +293,38 @@ export const useHudStore = create<HudState>()(
     }),
     {
       name: "jarvis-hud",
-      version: 2,
+      version: 3,
       migrate: (persistedState) => {
         const raw = (persistedState ?? {}) as Partial<HudState>;
+        const rawWidgets = Array.isArray(raw.visibleWidgets)
+          ? raw.visibleWidgets.filter((w) => w !== "smarthome")
+          : DEFAULT_HUD.visibleWidgets;
         return {
-          themeId: typeof raw.themeId === "string" ? raw.themeId : DEFAULT_HUD.themeId,
+          themeId: typeof raw.themeId === "string" && raw.themeId !== "arc-titanium" ? raw.themeId : DEFAULT_HUD.themeId,
           customAccent: typeof raw.customAccent === "string" ? raw.customAccent : DEFAULT_HUD.customAccent,
           borderRadius: typeof raw.borderRadius === "number" ? raw.borderRadius : DEFAULT_HUD.borderRadius,
           compactMode: typeof raw.compactMode === "boolean" ? raw.compactMode : DEFAULT_HUD.compactMode,
-          visibleWidgets: Array.isArray(raw.visibleWidgets)
-            ? raw.visibleWidgets
-            : DEFAULT_HUD.visibleWidgets,
+          visibleWidgets: rawWidgets,
           persona: { ...DEFAULT_PERSONA, ...(raw.persona ?? {}) },
           dockOpen: typeof raw.dockOpen === "boolean" ? raw.dockOpen : true,
-          coreWidthPx: typeof raw.coreWidthPx === "number" ? clampWidth(raw.coreWidthPx, 220, 440) : 280,
+          coreWidthPx: typeof raw.coreWidthPx === "number" ? clampWidth(raw.coreWidthPx, 220, 440) : 304,
           dockWidthPx: typeof raw.dockWidthPx === "number" ? clampWidth(raw.dockWidthPx, 240, 460) : 300,
           hudScale: typeof raw.hudScale === "number" ? raw.hudScale : 1,
           hudGrid: typeof raw.hudGrid === "boolean" ? raw.hudGrid : true,
           autoSwitchTabs: typeof raw.autoSwitchTabs === "boolean" ? raw.autoSwitchTabs : true,
-          closeBehavior: raw.closeBehavior === "confirm" ? "confirm" : "blob",
+          closeBehavior: raw.closeBehavior === "confirm" ? ("confirm" as CloseBehavior) : ("blob" as CloseBehavior),
           visualizerAbilities: typeof raw.visualizerAbilities === "boolean" ? raw.visualizerAbilities : true,
           blobPos:
             raw.blobPos && typeof raw.blobPos.x === "number" && typeof raw.blobPos.y === "number"
               ? raw.blobPos
               : { x: 24, y: 24 },
+          responseMode: raw.responseMode === "deep" ? ("deep" as ResponseMode) : ("butler" as ResponseMode),
+          layoutEditMode: false,
+          sectionOrder: (Array.isArray(raw.sectionOrder)
+            ? raw.sectionOrder.filter((s): s is HudSectionId => s === "core" || s === "chat" || s === "dock")
+            : ["core", "chat", "dock"]) as HudSectionId[],
+          glassFog: { ...DEFAULT_GLASS_FOG, ...(raw.glassFog ?? {}) },
+          blobAvatarUrl: typeof raw.blobAvatarUrl === "string" ? raw.blobAvatarUrl : "",
         };
       },
       partialize: (s) => ({
@@ -244,6 +343,10 @@ export const useHudStore = create<HudState>()(
         closeBehavior: s.closeBehavior,
         visualizerAbilities: s.visualizerAbilities,
         blobPos: s.blobPos,
+        responseMode: s.responseMode,
+        sectionOrder: s.sectionOrder,
+        glassFog: s.glassFog,
+        blobAvatarUrl: s.blobAvatarUrl,
       }),
     },
   ),

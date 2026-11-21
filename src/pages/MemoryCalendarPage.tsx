@@ -1,23 +1,32 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  Bell,
   BookOpen,
   Calendar,
+  Check,
   CheckCircle2,
   Circle,
+  Clock,
   Download,
   FileText,
+  Flag,
+  Pause,
   Pin,
+  Play,
   Plus,
+  RotateCcw,
   Search,
   Sparkles,
+  Timer,
   Trash2,
 } from "lucide-react";
 import { agentApi, type CronJobInfo, type PersonalMemoryItem } from "@/lib/agentApi";
 import { buildMemoryWiki, searchMemories, sortUpcomingEvents } from "@/lib/memoryAndCalendar";
-import { useLifeStore } from "@/store";
+import { formatClockMs, parseDurationMs, type WbReminderPriority } from "@/lib/timersAndReminders";
+import { useLifeStore, useUtilityStore } from "@/store";
 import { cn } from "@/lib/cn";
 
-type SubTab = "memories" | "wiki" | "notes" | "calendar";
+type SubTab = "memories" | "wiki" | "notes" | "calendar" | "utilities";
 
 export default function MemoryCalendarPage() {
   const [tab, setTab] = useState<SubTab>("memories");
@@ -52,12 +61,39 @@ export default function MemoryCalendarPage() {
   const [cronSchedule, setCronSchedule] = useState("0 9 * * *");
   const [cronPrompt, setCronPrompt] = useState("");
 
+  // WB Reminders, Timers & Stopwatch state
+  const reminders = useUtilityStore((s) => s.reminders);
+  const timers = useUtilityStore((s) => s.timers);
+  const stopwatchRunning = useUtilityStore((s) => s.stopwatchRunning);
+  const stopwatchElapsedMs = useUtilityStore((s) => s.stopwatchElapsedMs);
+  const stopwatchLaps = useUtilityStore((s) => s.stopwatchLaps);
+  const syncUtilities = useUtilityStore((s) => s.syncUtilities);
+  const addWbReminder = useUtilityStore((s) => s.addReminder);
+  const markReminderDone = useUtilityStore((s) => s.markReminderDone);
+  const snoozeReminder = useUtilityStore((s) => s.snoozeReminder);
+  const deleteWbReminder = useUtilityStore((s) => s.deleteReminder);
+  const addTimer = useUtilityStore((s) => s.addTimer);
+  const toggleTimer = useUtilityStore((s) => s.toggleTimer);
+  const resetTimer = useUtilityStore((s) => s.resetTimer);
+  const deleteTimer = useUtilityStore((s) => s.deleteTimer);
+  const startStopwatch = useUtilityStore((s) => s.startStopwatch);
+  const pauseStopwatch = useUtilityStore((s) => s.pauseStopwatch);
+  const resetStopwatch = useUtilityStore((s) => s.resetStopwatch);
+  const lapStopwatch = useUtilityStore((s) => s.lapStopwatch);
+
+  const [timerLabel, setTimerLabel] = useState("");
+  const [timerDurationText, setTimerDurationText] = useState("5m");
+  const [remTitle, setRemTitle] = useState("");
+  const [remPriority, setRemPriority] = useState<WbReminderPriority>("normal");
+  const [remMinutes, setRemMinutes] = useState(15);
+
   useEffect(() => {
     void refreshDomain("memories");
     void refreshDomain("notes");
     void refreshDomain("calendar");
+    void syncUtilities();
     void agentApi.getCronJobs().then((r) => setCronJobs(r.jobs)).catch(() => undefined);
-  }, [refreshDomain]);
+  }, [refreshDomain, syncUtilities]);
 
   const filteredMemories = useMemo(
     () => searchMemories(memories, memQuery),
@@ -183,6 +219,7 @@ export default function MemoryCalendarPage() {
             ["wiki", "Memory Wiki"],
             ["notes", "Notes Studio"],
             ["calendar", "Calendar & Routines"],
+            ["utilities", "Timers & WB Reminders"],
           ] as const).map(([id, label]) => (
             <button
               key={id}
@@ -581,6 +618,254 @@ export default function MemoryCalendarPage() {
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {tab === "utilities" && (
+          <div className="mx-auto grid max-w-6xl grid-cols-1 gap-4 lg:grid-cols-12">
+            {/* Stopwatch */}
+            <div className="hud-panel space-y-4 p-5 lg:col-span-4">
+              <div className="flex items-center justify-between">
+                <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-fg-muted">
+                  <Clock size={13} className="text-accent" /> Precision Stopwatch
+                </h2>
+                <span className="font-mono text-[10px] text-fg-muted">
+                  {stopwatchRunning ? "Running" : "Paused"}
+                </span>
+              </div>
+              <div
+                data-testid="stopwatch-display"
+                className="hud-elevated py-5 text-center font-mono text-3xl font-bold tracking-tight text-accent tabular-nums"
+              >
+                {formatClockMs(stopwatchElapsedMs, true)}
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() => (stopwatchRunning ? pauseStopwatch() : startStopwatch())}
+                  className="flex items-center justify-center gap-1 rounded-lg bg-accent py-2 font-medium text-background"
+                >
+                  {stopwatchRunning ? <Pause size={13} /> : <Play size={13} />}
+                  {stopwatchRunning ? "Pause" : "Start"}
+                </button>
+                <button
+                  type="button"
+                  onClick={lapStopwatch}
+                  disabled={!stopwatchRunning && stopwatchElapsedMs === 0}
+                  className="flex items-center justify-center gap-1 rounded-lg border border-border bg-elevated py-2 text-fg hover:border-accent disabled:opacity-40"
+                >
+                  <Flag size={13} /> Lap
+                </button>
+                <button
+                  type="button"
+                  onClick={resetStopwatch}
+                  className="flex items-center justify-center gap-1 rounded-lg border border-border bg-elevated py-2 text-fg-muted hover:text-fg"
+                >
+                  <RotateCcw size={13} /> Reset
+                </button>
+              </div>
+              <div className="max-h-48 space-y-1 overflow-y-auto">
+                {stopwatchLaps.map((lap) => (
+                  <div key={lap.id} className="hud-elevated flex justify-between px-3 py-1.5 font-mono text-[11px] tabular-nums">
+                    <span className="text-fg-muted">Lap {lap.index}</span>
+                    <span className="text-fg">+{formatClockMs(lap.lapMs, true)}</span>
+                    <span className="text-accent">{formatClockMs(lap.splitMs, true)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Multi-Countdown Timers */}
+            <div className="hud-panel space-y-3 p-5 lg:col-span-4">
+              <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-fg-muted">
+                <Timer size={13} className="text-accent" /> Countdown Timers
+              </h2>
+              <div className="flex flex-wrap gap-1.5 text-[11px]">
+                {[
+                  ["1m", 60_000],
+                  ["5m", 300_000],
+                  ["15m", 900_000],
+                  ["25m Focus", 1_500_000],
+                ].map(([lbl, ms]) => (
+                  <button
+                    key={String(lbl)}
+                    type="button"
+                    onClick={() => addTimer(String(lbl), Number(ms))}
+                    className="rounded-lg border border-border bg-elevated px-2.5 py-1 text-fg hover:border-accent"
+                  >
+                    + {lbl}
+                  </button>
+                ))}
+              </div>
+              <div className="space-y-1.5">
+                <input
+                  value={timerLabel}
+                  onChange={(e) => setTimerLabel(e.target.value)}
+                  placeholder="Timer label (e.g. Render Pass)"
+                  className="w-full rounded-lg border border-border bg-elevated px-2.5 py-1.5 text-xs text-fg outline-none focus:border-accent"
+                />
+                <div className="flex gap-1.5">
+                  <input
+                    value={timerDurationText}
+                    onChange={(e) => setTimerDurationText(e.target.value)}
+                    placeholder="5m, 90s, 02:30"
+                    className="min-w-0 flex-1 rounded-lg border border-border bg-elevated px-2.5 py-1.5 font-mono text-xs text-fg outline-none focus:border-accent"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const ms = parseDurationMs(timerDurationText) ?? 300_000;
+                      addTimer(timerLabel.trim() || `Timer ${timerDurationText}`, ms);
+                      setTimerLabel("");
+                    }}
+                    className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-background"
+                  >
+                    Start
+                  </button>
+                </div>
+              </div>
+              <div className="max-h-60 space-y-2 overflow-y-auto">
+                {timers.map((t) => {
+                  const pct = Math.max(0, Math.min(100, (t.remainingMs / Math.max(1, t.durationMs)) * 100));
+                  return (
+                    <div key={t.id} className="hud-elevated space-y-1.5 p-3 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate font-medium text-fg">{t.label}</span>
+                        <span className="font-mono text-sm font-semibold text-accent tabular-nums">
+                          {formatClockMs(t.remainingMs)}
+                        </span>
+                      </div>
+                      <div className="h-1 w-full overflow-hidden rounded bg-background">
+                        <div className="h-full bg-accent transition-all" style={{ width: `${pct}%` }} />
+                      </div>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => toggleTimer(t.id)}
+                          className="rounded border border-border px-2 py-0.5 text-[11px] hover:border-accent"
+                        >
+                          {t.running ? "Pause" : "Resume"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => resetTimer(t.id)}
+                          className="rounded border border-border px-2 py-0.5 text-[11px] hover:border-accent"
+                        >
+                          Reset
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteTimer(t.id)}
+                          className="text-fg-muted hover:text-red-500"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Workbench Sticky Reminders */}
+            <div className="hud-panel space-y-3 p-5 lg:col-span-4">
+              <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-fg-muted">
+                <Bell size={13} className="text-accent" /> Workbench (WB) Reminders
+              </h2>
+              <div className="space-y-1.5">
+                <input
+                  value={remTitle}
+                  onChange={(e) => setRemTitle(e.target.value)}
+                  placeholder="Sticky reminder title..."
+                  className="w-full rounded-lg border border-border bg-elevated px-2.5 py-1.5 text-xs text-fg outline-none focus:border-accent"
+                />
+                <div className="flex gap-1.5">
+                  <select
+                    aria-label="Reminder priority"
+                    value={remPriority}
+                    onChange={(e) => setRemPriority(e.target.value as WbReminderPriority)}
+                    className="rounded-lg border border-border bg-elevated px-2 py-1.5 text-xs text-fg outline-none"
+                  >
+                    <option value="low">Low</option>
+                    <option value="normal">Normal</option>
+                    <option value="urgent">Urgent</option>
+                  </select>
+                  <select
+                    aria-label="Reminder due offset"
+                    value={remMinutes}
+                    onChange={(e) => setRemMinutes(Number(e.target.value))}
+                    className="flex-1 rounded-lg border border-border bg-elevated px-2 py-1.5 text-xs text-fg outline-none"
+                  >
+                    <option value={0}>Due immediately</option>
+                    <option value={5}>In 5 minutes</option>
+                    <option value={15}>In 15 minutes</option>
+                    <option value={60}>In 1 hour</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!remTitle.trim()) return;
+                      void addWbReminder({
+                        title: remTitle.trim(),
+                        dueAt: Date.now() + remMinutes * 60_000,
+                        priority: remPriority,
+                      });
+                      setRemTitle("");
+                    }}
+                    className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-background"
+                  >
+                    Pin
+                  </button>
+                </div>
+              </div>
+              <div className="max-h-64 space-y-2 overflow-y-auto">
+                {reminders.map((r) => (
+                  <div
+                    key={r.id}
+                    className={cn(
+                      "hud-elevated space-y-1.5 p-3 text-xs",
+                      r.status === "done" && "opacity-55",
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className={cn("font-medium text-fg", r.status === "done" && "line-through")}>
+                          {r.title}
+                        </p>
+                        <p className="font-mono text-[10px] text-fg-muted">
+                          {r.priority.toUpperCase()} · {new Date(r.dueAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void deleteWbReminder(r.id)}
+                        className="text-fg-muted hover:text-red-500"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                    {r.status !== "done" && (
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => void snoozeReminder(r.id, 5)}
+                          className="rounded border border-border px-2 py-0.5 text-[10px] hover:border-accent"
+                        >
+                          +5m
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void markReminderDone(r.id)}
+                          className="flex items-center gap-1 rounded bg-accent px-2 py-0.5 text-[10px] font-medium text-background"
+                        >
+                          <Check size={10} /> Done
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}

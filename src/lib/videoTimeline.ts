@@ -1,15 +1,18 @@
 export type MotionPreset = "none" | "zoom-in" | "zoom-out" | "pan-left" | "pan-right";
+export type TransitionPreset = "none" | "fade" | "flash" | "slide";
 
 export interface VideoClip {
   id: string;
   name: string;
   src: string;
+  mediaType?: "video" | "image";
   duration: number;
   trimStart: number;
   trimEnd: number;
   speed: number;
   filterPreset: "none" | "cinematic" | "noir" | "vivid" | "warm" | "cool";
   motionPreset?: MotionPreset;
+  transition?: TransitionPreset;
   brightness: number;
   contrast: number;
   saturate: number;
@@ -28,6 +31,7 @@ export function createDefaultClip(partial: {
   id?: string;
   name: string;
   src: string;
+  mediaType?: "video" | "image";
   duration: number;
 }): VideoClip {
   const safeDuration = Math.max(0.5, Number.isFinite(partial.duration) ? partial.duration : 5);
@@ -35,12 +39,14 @@ export function createDefaultClip(partial: {
     id: partial.id || Math.random().toString(36).slice(2, 10),
     name: partial.name,
     src: partial.src,
+    mediaType: partial.mediaType ?? "video",
     duration: safeDuration,
     trimStart: 0,
     trimEnd: safeDuration,
     speed: 1,
     filterPreset: "none",
     motionPreset: "none",
+    transition: "none",
     brightness: 100,
     contrast: 100,
     saturate: 100,
@@ -57,6 +63,61 @@ export function clipEffectiveDuration(clip: VideoClip): number {
 
 export function totalTimelineDuration(clips: VideoClip[]): number {
   return clips.reduce((sum, c) => sum + clipEffectiveDuration(c), 0);
+}
+
+export function resolveTimelineClipAt(
+  clips: VideoClip[],
+  timelineTime: number,
+): {
+  clip: VideoClip | null;
+  clipIndex: number;
+  clipStartOnTimeline: number;
+  clipDurationOnTimeline: number;
+  sourceTime: number;
+  progress01: number;
+} {
+  if (clips.length === 0) {
+    return {
+      clip: null,
+      clipIndex: -1,
+      clipStartOnTimeline: 0,
+      clipDurationOnTimeline: 0,
+      sourceTime: 0,
+      progress01: 0,
+    };
+  }
+  const safeT = Math.max(0, Number.isFinite(timelineTime) ? timelineTime : 0);
+  let cursor = 0;
+  for (let i = 0; i < clips.length; i++) {
+    const clip = clips[i];
+    const eff = clipEffectiveDuration(clip);
+    if (safeT <= cursor + eff || i === clips.length - 1) {
+      const localEff = Math.max(0, Math.min(eff, safeT - cursor));
+      const progress01 = eff > 0 ? Math.max(0, Math.min(1, localEff / eff)) : 0;
+      const sourceTime = Math.min(
+        clip.trimEnd,
+        clip.trimStart + localEff * Math.max(0.25, clip.speed || 1),
+      );
+      return {
+        clip,
+        clipIndex: i,
+        clipStartOnTimeline: cursor,
+        clipDurationOnTimeline: eff,
+        sourceTime: Number(sourceTime.toFixed(3)),
+        progress01,
+      };
+    }
+    cursor += eff;
+  }
+  const last = clips[clips.length - 1];
+  return {
+    clip: last,
+    clipIndex: clips.length - 1,
+    clipStartOnTimeline: Math.max(0, cursor - clipEffectiveDuration(last)),
+    clipDurationOnTimeline: clipEffectiveDuration(last),
+    sourceTime: last.trimEnd,
+    progress01: 1,
+  };
 }
 
 export function clampClipTrim(clip: VideoClip, nextStart: number, nextEnd: number): VideoClip {

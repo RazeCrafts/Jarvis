@@ -1,17 +1,17 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* ---------- Design tokens (overridden dynamically by the 40-theme engine) ---------- */
+/* ---------- Design tokens (overridden dynamically by the theme engine) ---------- */
 @theme {
-  --color-background: #080c14;
-  --color-surface: #0e1523;
-  --color-elevated: #141e30;
-  --color-border: #22314a;
-  --color-accent: #22d3ee;
-  --color-accent-soft: #0891b2;
-  --color-accent-glow: rgba(34, 211, 238, 0.25);
-  --color-fg: #eef4ff;
-  --color-fg-muted: #8ba0be;
+  --color-background: #090b0e;
+  --color-surface: #11141a;
+  --color-elevated: #171c24;
+  --color-border: #262b36;
+  --color-accent: #f5b85c;
+  --color-accent-soft: #d97706;
+  --color-accent-glow: rgba(245, 184, 92, 0.28);
+  --color-fg: #f4f1ea;
+  --color-fg-muted: #9b968c;
 
   --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
   --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
@@ -20,23 +20,33 @@
 
 :root {
   --jarvis-radius: 14px;
+  --jarvis-panel-blur: 0px;
+  --jarvis-panel-opacity: 1;
+  --jarvis-btn-blur: 0px;
+  --jarvis-btn-opacity: 1;
 }
 
-/* ---------- HUD Panel Utilities (no backdrop-blur over WebGL canvas) ---------- */
+/* ---------- HUD Panel Utilities (with optional Settings Glass-Fog) ---------- */
 @utility hud-panel {
-  background: var(--color-surface);
+  background: color-mix(in srgb, var(--color-surface) calc(var(--jarvis-panel-opacity, 1) * 100%), transparent);
+  backdrop-filter: blur(var(--jarvis-panel-blur, 0px));
+  -webkit-backdrop-filter: blur(var(--jarvis-panel-blur, 0px));
   border: 1px solid var(--color-border);
   border-radius: var(--jarvis-radius, 14px);
 }
 
 @utility hud-elevated {
-  background: var(--color-elevated);
+  background: color-mix(in srgb, var(--color-elevated) calc(var(--jarvis-btn-opacity, 1) * 100%), transparent);
+  backdrop-filter: blur(var(--jarvis-btn-blur, 0px));
+  -webkit-backdrop-filter: blur(var(--jarvis-btn-blur, 0px));
   border: 1px solid var(--color-border);
   border-radius: calc(var(--jarvis-radius, 14px) - 2px);
 }
 
 @utility glass {
-  background: var(--color-surface);
+  background: color-mix(in srgb, var(--color-surface) calc(var(--jarvis-panel-opacity, 1) * 100%), transparent);
+  backdrop-filter: blur(var(--jarvis-panel-blur, 0px));
+  -webkit-backdrop-filter: blur(var(--jarvis-panel-blur, 0px));
   border: 1px solid var(--color-border);
 }
 

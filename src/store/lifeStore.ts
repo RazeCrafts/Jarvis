@@ -5,50 +5,38 @@ import {
   type MediaHistoryItem,
   type PersonalMemoryItem,
   type PersonalNoteItem,
-  type SmartHomeState,
 } from "@/lib/agentApi";
 
 interface LifeState {
   memories: PersonalMemoryItem[];
   notes: PersonalNoteItem[];
   calendar: CalendarEventItem[];
-  smartHome: SmartHomeState;
   mediaHistory: MediaHistoryItem[];
   loading: boolean;
   refreshAll: () => Promise<void>;
-  refreshDomain: (domain: "memories" | "notes" | "calendar" | "smarthome" | "media") => Promise<void>;
+  refreshDomain: (domain: "memories" | "notes" | "calendar" | "media") => Promise<void>;
 }
-
-const EMPTY_SMARTHOME: SmartHomeState = {
-  homeAssistantUrl: "",
-  homeAssistantConnected: false,
-  devices: [],
-  scenes: [],
-};
 
 export const useLifeStore = create<LifeState>((set, get) => ({
   memories: [],
   notes: [],
   calendar: [],
-  smartHome: EMPTY_SMARTHOME,
   mediaHistory: [],
   loading: false,
 
   refreshAll: async () => {
     set({ loading: true });
     try {
-      const [memRes, noteRes, calRes, homeRes, mediaRes] = await Promise.all([
+      const [memRes, noteRes, calRes, mediaRes] = await Promise.all([
         agentApi.getMemories(),
         agentApi.getNotes(),
         agentApi.getCalendar(),
-        agentApi.getSmartHome(),
         agentApi.getMediaHistory(),
       ]);
       set({
         memories: memRes.items,
         notes: noteRes.items,
         calendar: calRes.items,
-        smartHome: homeRes,
         mediaHistory: mediaRes.items,
       });
     } catch {
@@ -69,9 +57,6 @@ export const useLifeStore = create<LifeState>((set, get) => ({
       } else if (domain === "calendar") {
         const res = await agentApi.getCalendar();
         set({ calendar: res.items });
-      } else if (domain === "smarthome") {
-        const res = await agentApi.getSmartHome();
-        set({ smartHome: res });
       } else if (domain === "media") {
         const res = await agentApi.getMediaHistory();
         set({ mediaHistory: res.items });

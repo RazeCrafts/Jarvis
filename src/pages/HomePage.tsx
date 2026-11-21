@@ -5,7 +5,6 @@ import {
   CheckCircle2,
   Eye,
   Globe,
-  Home,
   LayoutGrid,
   PhoneCall,
   Pin,
@@ -59,7 +58,6 @@ export default function HomePage() {
 
   const memories = useLifeStore((s) => s.memories);
   const calendar = useLifeStore((s) => s.calendar);
-  const smartHome = useLifeStore((s) => s.smartHome);
   const mediaHistory = useLifeStore((s) => s.mediaHistory);
   const refreshAll = useLifeStore((s) => s.refreshAll);
   const refreshDomain = useLifeStore((s) => s.refreshDomain);
@@ -103,11 +101,6 @@ export default function HomePage() {
 
   const showCore = visibleWidgets.includes("core");
   const dockWidgets = visibleWidgets.filter((w) => w !== "core");
-
-  const toggleDevice = async (id: string, currentOn: boolean) => {
-    await agentApi.controlSmartDevice(id, { on: !currentOn });
-    await refreshDomain("smarthome");
-  };
 
   const completeEvent = async (id: string) => {
     await agentApi.updateCalendarEvent(id, { completed: true });
@@ -254,10 +247,10 @@ export default function HomePage() {
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab("settings")}
+              onClick={() => setActiveTab("media")}
               className="hud-elevated px-2.5 py-2 text-left font-medium text-fg transition-colors hover:border-accent"
             >
-              40 Themes
+              Movies &amp; Music
             </button>
           </div>
         </aside>
@@ -312,7 +305,7 @@ export default function HomePage() {
             {messagesCount > 0 && (
               <button
                 type="button"
-                onClick={clearMessages}
+                onClick={() => clearMessages()}
                 className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-fg-muted transition-colors hover:bg-elevated hover:text-fg"
               >
                 <Trash2 size={12} /> Clear
@@ -406,7 +399,7 @@ export default function HomePage() {
         )}
 
         <ChatWindow onQuickPrompt={(p) => agentService.send(p)} />
-        <InputBar onSend={(text, model) => agentService.send(text, model)} />
+        <InputBar onSend={(text, model, atts) => agentService.send(text, model, atts)} />
       </section>
 
       {/* Right Customizable HUD Widget Dock */}
@@ -500,50 +493,6 @@ export default function HomePage() {
               );
             }
 
-            if (widgetId === "smarthome") {
-              return (
-                <div key="smarthome" className="hud-panel p-3.5">
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="flex items-center gap-1.5 text-xs font-semibold text-fg">
-                      <Home size={13} className="text-accent" /> Smart Home
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab("smarthome")}
-                      className="text-[11px] text-accent hover:underline"
-                    >
-                      All rooms
-                    </button>
-                  </div>
-                  <div className="space-y-1.5">
-                    {smartHome.devices.slice(0, 4).map((dev) => (
-                      <div
-                        key={dev.id}
-                        className="hud-elevated flex items-center justify-between gap-2 px-2.5 py-2 text-xs"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate font-medium text-fg">{dev.name}</p>
-                          <p className="text-[10px] text-fg-muted">{dev.statusText}</p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => void toggleDevice(dev.id, dev.on)}
-                          className={cn(
-                            "shrink-0 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
-                            dev.on
-                              ? "bg-accent text-background"
-                              : "border border-border bg-surface text-fg-muted",
-                          )}
-                        >
-                          {dev.on ? "On" : "Off"}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            }
-
             if (widgetId === "media") {
               return (
                 <div key="media" className="hud-panel p-3.5">
@@ -553,10 +502,10 @@ export default function HomePage() {
                     </span>
                     <button
                       type="button"
-                      onClick={() => setActiveTab("smarthome")}
+                      onClick={() => setActiveTab("media")}
                       className="text-[11px] text-accent hover:underline"
                     >
-                      Search videos
+                      Open Hub
                     </button>
                   </div>
                   {mediaHistory.length === 0 ? (
@@ -567,7 +516,7 @@ export default function HomePage() {
                         <button
                           key={item.id}
                           type="button"
-                          onClick={() => setActiveTab("smarthome")}
+                          onClick={() => setActiveTab("media")}
                           className="hud-elevated flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left text-xs transition-colors hover:border-accent"
                         >
                           <span className="min-w-0 truncate font-medium text-fg">{item.title}</span>

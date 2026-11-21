@@ -33,7 +33,30 @@ import {
   extractWebContextWithGemini,
   runGeminiLiveBridge,
   executeArtCraftMcpCommand,
+  analyzeAndPlanVideoEditWithGemini,
+  analyzeWorkshopImageWithGemini,
+  generateWorkshopFinishWithGemini,
 } from "./server/geminiService";
+import {
+  buildGalaxyGraph,
+  classifyFileCategory,
+  extractRememberIntent,
+  queryGalaxyBrain,
+} from "./src/lib/fileGalaxy";
+import {
+  formatClockMs,
+  parseTimerOrReminderCommand,
+} from "./src/lib/timersAndReminders";
+import {
+  replaceWorkshopPart,
+  summarizeCostReceipt,
+} from "./src/lib/workshopProtocol";
+import {
+  buildDedicatedAppTargets,
+  parseMediaPlayCommand,
+  toEmbedUrl,
+  type MediaLaunchBundle,
+} from "./src/lib/mediaIntent";
 import {
   getBridgeStatus,
   rotatePairingToken,
@@ -302,7 +325,7 @@ const state = {
     { name: "workspace", label: "Live Workshop & Charts", description: "Generate 3D Three.js, HTML, SVG, and live graphs", enabled: true },
     { name: "memory", label: "Personal Memory & Notes", description: "Recall personal facts, preferences, and markdown notes", enabled: true },
     { name: "calendar", label: "Calendar & Routines", description: "Schedule events, reminders, and recurring routines", enabled: true },
-    { name: "smarthome", label: "Smart Home & Media", description: "Control rooms, lights, climate, and media queues", enabled: true },
+    { name: "media", label: "Movies & Music Media", description: "Online movie & music discovery and playback", enabled: true },
     { name: "code", label: "Code Sandbox", description: "Execute sandboxed JavaScript snippets", enabled: true },
     { name: "desktop", label: "Desktop Bridge Actions", description: "OS app launching & CLI bridge (requires companion)", enabled: false },
   ],
@@ -436,36 +459,38 @@ function detectWorkspaceRequest(message: string): {
   return { kind, edit, artifact: edit ? latest : null };
 }
 
-const THREE_HELPER_DOC = `THREE HELPERS (already loaded — do not import anything):
-  JARVIS.scene({background:'#0a0a12'})                      -> THREE.Scene
-  JARVIS.camera({fov:50, position:[3,2,5], lookAt:[0,0,0]}) -> camera
-  JARVIS.lights({ambient:0.6, key:1.6, fill:0.6})           -> {ambient,key,fill}
-  JARVIS.mat('#ff5533', {metalness:0.6, roughness:0.35})    -> MeshStandardMaterial
-  JARVIS.box(w,h,d,mat)  JARVIS.sphere(r,mat)  JARVIS.cylinder(rTop,rBottom,h,mat)
-  JARVIS.cone(r,h,mat)   JARVIS.torus(r,tube,mat)  JARVIS.plane(w,h,mat)
-  JARVIS.group(...objects)                                  -> THREE.Group
-  JARVIS.at(object, [x,y,z], {rotation:[x,y,z], scale:[x,y,z]}) -> the same object
-  JARVIS.add(...objects)                                    -> adds to the scene
-  JARVIS.fit({padding:1.4})                                 -> auto-fit camera (call once)
-  JARVIS.onFrame((tSeconds, deltaSeconds) => { ... })       -> animation hook
-  JARVIS.orbit({autoRotate:true, autoRotateSpeed:0.8, minDistance:2, maxDistance:20})`;
+const THREE_HELPER_DOC = `WORKSHOP STAGE HELPERS (already loaded globally — NO imports):
+  Use //@title <Title> on line 1, then group logical sub-assemblies with //@part <kebab-name> | <short status>, and end with //@end.
+  W.add(obj, { name:'rotor', explode:[0, 1.4, 0], label:'Rotor Hub', layer:'part' }) -> adds & tracks teardown vectors
+  W.frame({ padding:1.35 })                                  -> auto-frames camera nicely
+  W.onTick((tSec, dtSec) => { ... })                         -> animation loop
+  W.metal('titanium'|'gold'|'rose-gold'|'chrome'|'copper'|'steel'|'dark')
+  W.glass(tintHex, opacity)   W.plastic(colorHex, roughness)   W.wood(toneHex)   W.emissive(colorHex, intensity)
+  W.text('Label', { position:[x,y,z], color:'#e2e8f0' })
+  Architectural Floor Plans:
+    W.floorplan({ rooms:[{name, x, z, w, d, floorColor}], doors:[{x, z, rotY}], windows:[{x, z, rotY}], open:true })
+    W.furniture('sofa'|'bed'|'table'|'desk'|'chair'|'island'|'tub'|'plant', { position:[x,0,z], rotY })
+    W.roof({ w, d }, { kind:'gable'|'hip'|'flat' })
+  Core primitives (all cast & receive studio softbox shadows):
+    JARVIS.box(w,h,d,mat)  JARVIS.sphere(r,mat)  JARVIS.cylinder(rTop,rBot,h,mat)
+    JARVIS.cone(r,h,mat)   JARVIS.torus(r,tube,mat)  JARVIS.group(...objs)  JARVIS.at(obj,[x,y,z],{rotation,scale})`;
 
 function buildWorkspacePrompt(message: string, artifact: StoredArtifact | null, kind: "three" | "html" | "svg"): string {
-  const rules = `You are building a LIVE artifact for JARVIS's Workshop.
+  const rules = `You are building a LIVE artifact for JARVIS's Sealed 3D Workshop.
 OUTPUT RULES
 - Reply with one or two short sentences about what you built, then EXACTLY ONE fenced code block tagged \`${kind}\`.
 - Do not add any other code block or file.
-- The artifact runs offline inside a sandboxed iframe: no imports, no CDN, no fetch, no external assets.
+- The artifact runs inside an isolated CSP sandbox: zero imports, zero fetch, zero CDN links.
 `;
   const body =
     kind === "three"
-      ? `- Write plain JavaScript (no imports). Use the helpers below inside the block.\n- End with JARVIS.fit() and JARVIS.onFrame(...) when animated.\n\n${THREE_HELPER_DOC}`
+      ? `- Write plain JavaScript (no imports). Wrap components with //@title and //@part kebab-name | status comments and end with //@end.\n- Use W.add(mesh, { name, explode:[dx,dy,dz], label }) for modular parts so teardowns & surgical part edits work cleanly, and call W.frame() at the end.\n\n${THREE_HELPER_DOC}`
       : kind === "svg"
         ? `- Return a complete \`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">…</svg>\`.`
         : `- Return a complete \`<!doctype html>\` document with inline CSS and JS.`;
 
   const current = artifact
-    ? `\nCURRENT ARTIFACT (v${artifact.versions[artifact.versions.length - 1]?.n ?? 1}):\n\`\`\`${artifact.kind}\n${artifact.content}\n\`\`\`\nApply the edit and return the complete updated artifact.\n`
+    ? `\nCURRENT ARTIFACT (v${artifact.versions[artifact.versions.length - 1]?.n ?? 1}):\n\`\`\`${artifact.kind}\n${artifact.content}\n\`\`\`\nApply the edit (keeping untouched parts intact) and return the complete updated artifact.\n`
     : "";
 
   return `${rules}${body}\n${current}\nUSER REQUEST: ${message}`;
@@ -540,31 +565,201 @@ function saveArtifact(kind: StoredArtifact["kind"], title: string, content: stri
 
 /* ------------------------------------------------------------------ deterministic actions */
 
-function runDeterministicAction(text: string): { handled: boolean; reply?: string; data?: Record<string, unknown>; stopSpeaking?: boolean } {
+async function runDeterministicActionAsync(
+  text: string,
+): Promise<{ handled: boolean; reply?: string; data?: Record<string, unknown>; stopSpeaking?: boolean }> {
   const original = text.trim().replace(/\s+/g, " ");
   if (!original) return { handled: false };
 
-  if (/^(?:stop|be quiet|quiet|silence|shut up|never mind|nevermind)[.!]?$/i.test(original)) {
+  if (/^(?:stop|wait|hold on|be quiet|quiet|silence|shut up|never mind|nevermind)[.!]?$/i.test(original)) {
     return { handled: true, reply: "", data: { action: "stop_speaking" }, stopSpeaking: true };
   }
 
+  // Cost receipt voice/text check (Prompt 15)
+  if (/\b(how\s+much\s+did\s+(?:that|this|everything)\s+cost|session\s+cost|api\s+cost|cost\s+receipt)\b/i.test(original)) {
+    const data = await loadJarvisData();
+    const summary = summarizeCostReceipt(data.costLog);
+    const reply =
+      summary.callCount === 0
+        ? "No billed intelligence calls logged yet in this session, sir ($0.0000)."
+        : `Estimated API usage across ${summary.callCount} call${summary.callCount === 1 ? "" : "s"}: ${summary.formattedTotal} (${summary.totalInputTokens.toLocaleString()} input / ${summary.totalOutputTokens.toLocaleString()} output tokens${summary.imageCount ? `, ${summary.imageCount} studio image(s)` : ""}).`;
+    return { handled: true, reply, data: { action: "cost_receipt", summary } };
+  }
+
+  // Prompt 05: Live Recall ONE DOOR ("Remember that...", "Note to self...", "Don't let me forget...")
+  const remember = extractRememberIntent(original);
+  if (remember) {
+    const data = await loadJarvisData();
+    const note = {
+      id: newId("note"),
+      title: remember.title,
+      body: remember.body,
+      tags: remember.tags,
+      updatedAt: Date.now(),
+    };
+    data.notes.unshift(note);
+    await saveJarvisData(data);
+    return {
+      handled: true,
+      reply: `Saved to your Knowledge Galaxy under "${note.title}", sir.`,
+      data: { action: "galaxy_birth", noteId: note.id, nodeId: `note:${note.id}` },
+    };
+  }
+
+  // Timers, Stopwatch & WB Reminders
+  const utilityIntent = parseTimerOrReminderCommand(original);
+  if (utilityIntent) {
+    const data = await loadJarvisData();
+    if (utilityIntent.kind === "stopwatch") {
+      return {
+        handled: true,
+        reply: `Stopwatch ${utilityIntent.action}, sir.`,
+        data: { action: "utility_stopwatch", stopwatchAction: utilityIntent.action },
+      };
+    }
+    if (utilityIntent.kind === "start_timer") {
+      const timer = {
+        id: newId("tmr"),
+        label: utilityIntent.label,
+        durationMs: utilityIntent.durationMs,
+        remainingMs: utilityIntent.durationMs,
+        running: true,
+        finished: false,
+        createdAt: Date.now(),
+      };
+      data.timers.unshift(timer);
+      await saveJarvisData(data);
+      return {
+        handled: true,
+        reply: `Started ${formatClockMs(utilityIntent.durationMs)} timer for ${utilityIntent.label}, sir.`,
+        data: { action: "utility_timer", timer },
+      };
+    }
+    if (utilityIntent.kind === "create_reminder") {
+      const reminder = {
+        id: newId("rem"),
+        title: utilityIntent.title,
+        dueAt: utilityIntent.dueAt,
+        priority: utilityIntent.priority,
+        status: "pending" as const,
+        createdAt: Date.now(),
+      };
+      data.wbReminders.unshift(reminder);
+      await saveJarvisData(data);
+      return {
+        handled: true,
+        reply: `WB Reminder scheduled: "${reminder.title}" at ${new Date(reminder.dueAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}, sir.`,
+        data: { action: "utility_reminder", reminder },
+      };
+    }
+  }
+
+  // Online Movie/Song Finder + In-Site / Local / Dedicated App Play
+  const mediaIntent = parseMediaPlayCommand(original);
+  if (mediaIntent) {
+    const data = await loadJarvisData();
+    const qLower = mediaIntent.query.toLowerCase();
+    const matchingLocal = data.vaultFiles.find(
+      (f) =>
+        (f.category === "video" || f.category === "audio") &&
+        Boolean(f.dataUrl) &&
+        f.name.toLowerCase().includes(qLower),
+    );
+
+    const onlineResults = await searchVideosWithGemini(mediaIntent.query, mediaIntent.kind);
+    const primaryOnline = onlineResults.find((r) => Boolean(r.embedUrl)) ?? onlineResults[0];
+
+    if (onlineResults.length > 0) {
+      for (const r of onlineResults.slice(0, 3)) {
+        if (!data.mediaHistory.some((m) => m.url === r.url)) {
+          data.mediaHistory.unshift({
+            id: newId("med"),
+            title: r.title,
+            channel: r.channel,
+            url: r.url,
+            embedUrl: r.embedUrl,
+            kind: mediaIntent.kind === "song" ? "music" : "video",
+            addedAt: Date.now(),
+          });
+        }
+      }
+      data.mediaHistory = data.mediaHistory.slice(0, 24);
+      await saveJarvisData(data);
+    }
+
+    const targets = buildDedicatedAppTargets(
+      mediaIntent.query,
+      mediaIntent.kind,
+      primaryOnline?.url,
+    );
+
+    const preferredTarget = mediaIntent.preferredApp
+      ? targets.find((t) => t.id === mediaIntent.preferredApp)
+      : undefined;
+
+    if (preferredTarget?.bridgeAppName && getBridgeStatus().connected) {
+      await dispatchBridgeCommand("launch_app", { name: preferredTarget.bridgeAppName }).catch(() => undefined);
+    }
+
+    const embedUrl = primaryOnline?.embedUrl ?? (primaryOnline?.url ? toEmbedUrl(primaryOnline.url) : undefined);
+    const playableInSite = Boolean(matchingLocal?.dataUrl || embedUrl);
+
+    const bundle: MediaLaunchBundle = {
+      id: newId("play"),
+      query: mediaIntent.query,
+      title: matchingLocal?.name || primaryOnline?.title || mediaIntent.query,
+      kind: mediaIntent.kind,
+      channel: matchingLocal ? "Local Vault" : primaryOnline?.channel || "Online Search",
+      watchUrl: primaryOnline?.url || preferredTarget?.webUrl || targets[0]?.webUrl || "",
+      embedUrl,
+      localDataUrl: matchingLocal?.dataUrl,
+      mimeType: matchingLocal?.mimeType,
+      playableInSite,
+      preferredApp: mediaIntent.preferredApp,
+      targets,
+      alternates: onlineResults.slice(0, 5),
+    };
+
+    const reply = matchingLocal
+      ? `Found "${matchingLocal.name}" locally — playing right here on this site, sir.`
+      : embedUrl
+        ? `Found "${bundle.title}" (${bundle.channel}) — loading playback right here on this site, plus dedicated app launchers below, sir.`
+        : `Ready to open "${mediaIntent.query}" (${mediaIntent.kind}) — choose a streaming site or dedicated app below, or load a local file directly, sir.`;
+
+    return {
+      handled: true,
+      reply,
+      data: { action: "media_play", media: bundle },
+    };
+  }
+
   const navMatch = original.match(
-    /^(?:open|show|go\s+to|switch\s+to)\s+(?:the\s+)?(workspace|workshop|memory|calendar|notes|settings|customize|themes|tools|control|gateway|tasks|providers|bridge|skills|plugins|home|hud|video|video\s+studio|smart\s+home|media)[.!]?$/i,
+    /^(?:open|show|go\s+to|switch\s+to)\s+(?:the\s+)?(galaxy|file\s+galaxy|brain|workspace|workshop|memory|calendar|notes|timers|reminders|stopwatch|settings|customize|themes|tools|control|gateway|tasks|daily\s+tasks|providers|bridge|skills|plugins|home|hud|video|video\s+studio|media|media\s+hub|movies|music)[.!]?$/i,
   );
   if (navMatch) {
     const target = navMatch[1].toLowerCase();
     const map: Record<string, string> = {
+      galaxy: "galaxy",
+      "file galaxy": "galaxy",
+      brain: "galaxy",
       workspace: "workspace",
       workshop: "workspace",
       home: "home",
       hud: "home",
       video: "video",
       "video studio": "video",
-      "smart home": "smarthome",
-      media: "smarthome",
+      media: "media",
+      "media hub": "media",
+      movies: "media",
+      music: "media",
+      "daily tasks": "tasks",
+      tasks: "tasks",
       memory: "memory",
       calendar: "memory",
       notes: "memory",
+      timers: "memory",
+      reminders: "memory",
+      stopwatch: "memory",
       skills: "skills",
       plugins: "skills",
       providers: "providers",
@@ -572,7 +767,6 @@ function runDeterministicAction(text: string): { handled: boolean; reply?: strin
       control: "providers",
       tools: "skills",
       gateway: "providers",
-      tasks: "memory",
       settings: "settings",
       customize: "settings",
       themes: "settings",
@@ -585,7 +779,7 @@ function runDeterministicAction(text: string): { handled: boolean; reply?: strin
   }
 
   const stageMatch = original.match(
-    /^(pull\s+it\s+apart|pull\s+apart|explode\s+it|explode|put\s+it\s+back\s+together|put\s+it\s+back|reassemble|from\s+the\s+top|top\s+view|camera\s+from\s+the\s+top|from\s+the\s+front|front\s+view|3d\s+print\s+it|export\s+3d\s+print|export\s+glb|photograph\s+it|take\s+a\s+photo|render\s+it)[.!]?$/i,
+    /^(pull\s+it\s+apart|pull\s+apart|explode\s+it|explode|put\s+it\s+back\s+together|put\s+it\s+back|reassemble|from\s+the\s+top|top\s+view|camera\s+from\s+the\s+top|from\s+the\s+front|front\s+view|from\s+the\s+side|side\s+view|zoom\s+in|zoom\s+out|stop\s+spinning|spin\s+it|put\s+(?:the\s+)?roof\s+on|take\s+(?:the\s+)?roof\s+off|studio\s+lighting|day\s+lighting|sunset\s+lighting|night\s+lighting|3d\s+print\s+it|export\s+stl|export\s+3d\s+print|export\s+glb|photograph\s+it|take\s+a\s+photo|render\s+it|make\s+miniature)[.!]?$/i,
   );
   if (stageMatch) {
     const cmdRaw = stageMatch[1].toLowerCase();
@@ -603,11 +797,50 @@ function runDeterministicAction(text: string): { handled: boolean; reply?: strin
     } else if (cmdRaw.includes("front")) {
       command = "camera_front";
       reply = "Viewing from the front.";
-    } else if (cmdRaw.includes("print") || cmdRaw.includes("glb")) {
+    } else if (cmdRaw.includes("side")) {
+      command = "camera_side";
+      reply = "Viewing from the side.";
+    } else if (cmdRaw.includes("zoom in")) {
+      command = "zoom_in";
+      reply = "Moving closer, sir.";
+    } else if (cmdRaw.includes("zoom out")) {
+      command = "zoom_out";
+      reply = "Stepping back, sir.";
+    } else if (cmdRaw.includes("stop spinning")) {
+      command = "spin_off";
+      reply = "Turntable paused.";
+    } else if (cmdRaw.includes("spin")) {
+      command = "spin_on";
+      reply = "Turntable active.";
+    } else if (cmdRaw.includes("roof on")) {
+      command = "roof_on";
+      reply = "Roof layer shown.";
+    } else if (cmdRaw.includes("roof off")) {
+      command = "roof_off";
+      reply = "Roof layer hidden.";
+    } else if (cmdRaw.includes("day lighting")) {
+      command = "light_day";
+      reply = "Switched to daylight lighting.";
+    } else if (cmdRaw.includes("sunset lighting")) {
+      command = "light_sunset";
+      reply = "Switched to sunset lighting.";
+    } else if (cmdRaw.includes("night lighting")) {
+      command = "light_night";
+      reply = "Switched to night lighting.";
+    } else if (cmdRaw.includes("studio lighting")) {
+      command = "light_studio";
+      reply = "Switched to softbox studio lighting.";
+    } else if (cmdRaw.includes("print") || cmdRaw.includes("stl")) {
+      command = "export_stl";
+      reply = "Exporting 3D print STL file, sir.";
+    } else if (cmdRaw.includes("glb")) {
       command = "export_glb";
-      reply = "Exporting 3D print file, sir.";
+      reply = "Exporting GLB assembly, sir.";
+    } else if (cmdRaw.includes("miniature")) {
+      command = "finish_miniature";
+      reply = "Staging architectural miniature view, sir.";
     } else if (cmdRaw.includes("photograph") || cmdRaw.includes("photo") || cmdRaw.includes("render")) {
-      command = "export_png";
+      command = "finish_photograph";
       reply = "Capturing studio photograph, sir.";
     }
     return { handled: true, reply, data: { action: "stage_control", command } };
@@ -617,10 +850,12 @@ function runDeterministicAction(text: string): { handled: boolean; reply?: strin
   if (navIntent.tab) {
     const labelMap: Record<string, string> = {
       home: "Command HUD",
+      galaxy: "File Galaxy & Brain",
       workspace: "Workshop Studio",
       video: "Video Studio",
-      smarthome: "Smart Home & Media",
-      memory: "Memory & Calendar",
+      media: "Movies & Music Hub",
+      tasks: "Daily Tasks",
+      memory: "Memory, WB & Timers",
       skills: "Skills & Plugins",
       providers: "Models & Bridge",
       settings: "Customize & Settings",
@@ -682,7 +917,7 @@ async function streamProviderCompletion(
   history: Array<{ role: string; content: string }>,
   modelOverride: string | null,
   onEvent: (event: Record<string, unknown>) => void,
-  options: { rawMode?: boolean } = {},
+  options: { rawMode?: boolean; attachments?: Array<{ name: string; mimeType: string; kind?: string; dataBase64?: string; textContent?: string }> } = {},
 ): Promise<string> {
   const chosenProvider = modelOverride?.startsWith("gemini-") ? "gemini-builtin" : state.provider;
 
@@ -1001,93 +1236,7 @@ app.get("/api/calendar/export.ics", async (_req: Request, res: Response) => {
   res.send(exportEventsToIcs(data.calendar));
 });
 
-/* ---------------- Smart Home & Media Hub ---------------- */
-
-app.get("/api/smarthome", async (_req: Request, res: Response) => {
-  const data = await loadJarvisData();
-  res.json(data.smartHome);
-});
-
-app.post("/api/smarthome/device/:id", async (req: Request, res: Response) => {
-  const data = await loadJarvisData();
-  const dev = data.smartHome.devices.find((d) => d.id === req.params.id);
-  if (!dev) {
-    res.status(404).json({ detail: "device not found" });
-    return;
-  }
-  if (typeof req.body?.on === "boolean") dev.on = req.body.on;
-  if (typeof req.body?.level === "number") dev.level = Math.max(0, Math.min(100, req.body.level));
-  if (typeof req.body?.targetTemp === "number") dev.targetTemp = req.body.targetTemp;
-
-  if (dev.type === "climate") {
-    dev.statusText = dev.on ? `Cooling to ${dev.targetTemp ?? 70}°F` : "Climate Off";
-  } else if (dev.type === "lock") {
-    dev.statusText = dev.on ? "Locked" : "Unlocked";
-  } else if (dev.type === "camera") {
-    dev.statusText = dev.on ? "Live Monitoring" : "Privacy Shutter";
-  } else {
-    dev.statusText = dev.on ? `${dev.level ?? 100}% Active` : "Standby";
-  }
-
-  await saveJarvisData(data);
-  res.json({ ok: true, device: dev });
-});
-
-app.post("/api/smarthome/scene/:id", async (req: Request, res: Response) => {
-  const data = await loadJarvisData();
-  const scene = data.smartHome.scenes.find((s) => s.id === req.params.id);
-  if (!scene) {
-    res.status(404).json({ detail: "scene not found" });
-    return;
-  }
-  for (const act of scene.actions) {
-    const dev = data.smartHome.devices.find((d) => d.id === act.deviceId);
-    if (dev) {
-      dev.on = act.on;
-      if (typeof act.level === "number") dev.level = act.level;
-      if (typeof act.targetTemp === "number") dev.targetTemp = act.targetTemp;
-      if (dev.type === "lock") dev.statusText = dev.on ? "Locked" : "Unlocked";
-      else if (dev.type === "camera") dev.statusText = dev.on ? "Live Monitoring" : "Standby";
-      else dev.statusText = dev.on ? `${dev.level ?? 100}% Active` : "Standby";
-    }
-  }
-  await saveJarvisData(data);
-  res.json({ ok: true, smartHome: data.smartHome });
-});
-
-app.post("/api/smarthome/home-assistant", async (req: Request, res: Response) => {
-  const data = await loadJarvisData();
-  const url = String(req.body?.url || "").trim().replace(/\/+$/, "");
-  const token = String(req.body?.token || "").trim();
-  if (!url || !token) {
-    data.smartHome.homeAssistantUrl = "";
-    data.smartHome.homeAssistantConnected = false;
-    await saveJarvisData(data);
-    res.json({ ok: true, connected: false, message: "Home Assistant disconnected." });
-    return;
-  }
-  try {
-    const resp = await fetch(`${url}/api/`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!resp.ok) {
-      res.json({ ok: false, connected: false, message: `Home Assistant returned ${resp.status}.` });
-      return;
-    }
-    keyStore.set("HOME_ASSISTANT_TOKEN", token);
-    data.smartHome.homeAssistantUrl = url;
-    data.smartHome.homeAssistantConnected = true;
-    await saveJarvisData(data);
-    res.json({ ok: true, connected: true, message: "Connected to Home Assistant instance." });
-  } catch (err) {
-    res.json({
-      ok: false,
-      connected: false,
-      message: `Could not reach ${url}: ${err instanceof Error ? err.message : String(err)}`,
-    });
-  }
-});
+/* ---------------- Online Movies & Music Media Hub ---------------- */
 
 app.get("/api/media", async (_req: Request, res: Response) => {
   const data = await loadJarvisData();
@@ -1096,12 +1245,15 @@ app.get("/api/media", async (_req: Request, res: Response) => {
 
 app.post("/api/media/search", async (req: Request, res: Response) => {
   const query = String(req.body?.query || "").trim();
-  const kind = req.body?.kind === "music" ? "music" : "video";
+  const rawKind = String(req.body?.kind || "video");
+  const kind: "movie" | "music" | "video" =
+    rawKind === "movie" ? "movie" : rawKind === "music" || rawKind === "song" ? "music" : "video";
   if (!query) {
     res.status(400).json({ detail: "query is required" });
     return;
   }
-  const results = await searchVideosWithGemini(query);
+  const results = await searchVideosWithGemini(query, kind === "music" ? "song" : kind);
+  const targets = buildDedicatedAppTargets(query, kind === "music" ? "song" : kind, results[0]?.url);
   const data = await loadJarvisData();
   if (results.length > 0) {
     for (const r of results.slice(0, 3)) {
@@ -1112,7 +1264,7 @@ app.post("/api/media/search", async (req: Request, res: Response) => {
           channel: r.channel,
           url: r.url,
           embedUrl: r.embedUrl,
-          kind,
+          kind: kind === "music" ? "music" : "video",
           addedAt: Date.now(),
         });
       }
@@ -1120,7 +1272,7 @@ app.post("/api/media/search", async (req: Request, res: Response) => {
     data.mediaHistory = data.mediaHistory.slice(0, 24);
     await saveJarvisData(data);
   }
-  res.json({ ok: true, results, history: data.mediaHistory });
+  res.json({ ok: true, results, targets, history: data.mediaHistory });
 });
 
 /* ---------------- Persona, HUD & Share Bundle ---------------- */
@@ -1292,7 +1444,7 @@ app.post("/api/plugins/draft-workflow", async (req: Request, res: Response) => {
   }
 });
 
-/* ---------------- Memory Wiki, Briefing, Watchdog, Automations, Video TTS & Web Extract ---------------- */
+/* ---------------- Memory Wiki, Briefing, Automations, Video TTS & Web Extract ---------------- */
 
 app.get("/api/memory/wiki", async (_req: Request, res: Response) => {
   const data = await loadJarvisData();
@@ -1301,59 +1453,17 @@ app.get("/api/memory/wiki", async (_req: Request, res: Response) => {
 
 app.get("/api/briefing", async (_req: Request, res: Response) => {
   const data = await loadJarvisData();
-  const unreadAlerts = data.securityLog.filter((l) => l.severity === "alert").length;
   const briefing = buildProactiveBriefing({
     userTitle: data.persona.userTitle,
     memories: data.memories,
     calendar: data.calendar,
-    devices: data.smartHome.devices,
-    watchdogArmed: data.smartHome.watchdogArmed,
-    securityAlertsCount: unreadAlerts,
+    activeRoutinesCount: data.automations.filter((a) => a.enabled).length,
   });
   const triggeredAutomations = evaluateAutomationRules(
     data.automations,
-    data.smartHome.devices,
     data.calendar,
-    data.smartHome.watchdogArmed,
   );
   res.json({ briefing, triggeredAutomations });
-});
-
-app.get("/api/smarthome/watchdog", async (_req: Request, res: Response) => {
-  const data = await loadJarvisData();
-  res.json({
-    watchdogArmed: data.smartHome.watchdogArmed,
-    securityLog: data.securityLog.slice(0, 30),
-    automations: data.automations,
-  });
-});
-
-app.post("/api/smarthome/watchdog/toggle", async (req: Request, res: Response) => {
-  const data = await loadJarvisData();
-  const armed = typeof req.body?.armed === "boolean" ? req.body.armed : !data.smartHome.watchdogArmed;
-  data.smartHome.watchdogArmed = armed;
-  data.securityLog.unshift({
-    id: newId("sec"),
-    severity: "info",
-    source: "Watchdog Mode",
-    message: armed ? "Residence Watchdog armed. Locks & exterior cameras monitored." : "Watchdog disarmed by user.",
-    ts: Date.now(),
-  });
-  data.securityLog = data.securityLog.slice(0, 50);
-  await saveJarvisData(data);
-  res.json({ ok: true, watchdogArmed: armed, securityLog: data.securityLog.slice(0, 30) });
-});
-
-app.post("/api/smarthome/watchdog/event", async (req: Request, res: Response) => {
-  const data = await loadJarvisData();
-  const source = String(req.body?.source || "Front Porch Camera").trim();
-  const message = String(req.body?.message || "Motion detected near residence entry.").trim();
-  const severity = req.body?.severity === "info" ? "info" : "alert";
-  const entry = { id: newId("sec"), severity: severity as "info" | "alert", source, message, ts: Date.now() };
-  data.securityLog.unshift(entry);
-  data.securityLog = data.securityLog.slice(0, 50);
-  await saveJarvisData(data);
-  res.json({ ok: true, entry, securityLog: data.securityLog.slice(0, 30) });
 });
 
 app.get("/api/automations", async (_req: Request, res: Response) => {
@@ -1370,15 +1480,15 @@ app.post("/api/automations", async (req: Request, res: Response) => {
     res.status(400).json({ detail: "name and actionSummary are required" });
     return;
   }
-  const validTrigger = ["lock_unlocked_away", "meeting_approaching", "motion_detected", "evening_hour"].includes(triggerType)
-    ? (triggerType as "lock_unlocked_away" | "meeting_approaching" | "motion_detected" | "evening_hour")
+  const validTrigger = ["meeting_approaching", "morning_brief", "evening_hour", "cron"].includes(triggerType)
+    ? (triggerType as "meeting_approaching" | "morning_brief" | "evening_hour" | "cron")
     : "meeting_approaching";
   const item = {
     id: newId("auto"),
     name,
     triggerType: validTrigger,
     actionSummary,
-    targetSceneId: typeof req.body?.targetSceneId === "string" ? req.body.targetSceneId : undefined,
+    targetChannel: typeof req.body?.targetChannel === "string" ? req.body.targetChannel : "hud",
     enabled: true,
   };
   data.automations.unshift(item);
@@ -1409,9 +1519,7 @@ app.post("/api/automations/evaluate", async (_req: Request, res: Response) => {
   const data = await loadJarvisData();
   const triggered = evaluateAutomationRules(
     data.automations,
-    data.smartHome.devices,
     data.calendar,
-    data.smartHome.watchdogArmed,
   );
   res.json({ ok: true, triggered });
 });
@@ -2067,7 +2175,7 @@ app.post("/api/gateway/inbound", async (req: Request, res: Response) => {
   state.gateway.logs.push(`[${platform}] <- ${sender}: ${text}`);
 
   let reply = "";
-  const det = runDeterministicAction(text);
+  const det = await runDeterministicActionAsync(text);
   if (det.handled && det.reply) {
     reply = det.reply;
   } else {
@@ -2078,7 +2186,7 @@ app.post("/api/gateway/inbound", async (req: Request, res: Response) => {
     }
     if (!reply) {
       const upcomingCount = data.calendar.filter((c) => !c.completed).length;
-      reply = `Received via ${platform}, ${data.persona.userTitle || "Sir"}. You have ${upcomingCount} active schedule items and ${data.smartHome.devices.filter((d) => d.on).length} active home devices.`;
+      reply = `Received via ${platform}, ${data.persona.userTitle || "Sir"}. You have ${upcomingCount} active schedule items and ${data.automations.filter((a) => a.enabled).length} active routines.`;
     }
   }
 
@@ -2204,7 +2312,9 @@ app.get("/voice/status", (_req: Request, res: Response) => res.json(state.voice)
 app.get("/voice/mics", (_req: Request, res: Response) => res.json({ mics: [] }));
 app.post("/voice/listen", (_req: Request, res: Response) => res.json({ ok: true, state: "listening" }));
 app.post("/voice/cancel", (_req: Request, res: Response) => res.json({ ok: true, state: "stopped" }));
-app.post("/actions/run", (req: Request, res: Response) => res.json(runDeterministicAction(String(req.body?.text || ""))));
+app.post("/actions/run", async (req: Request, res: Response) => {
+  res.json(await runDeterministicActionAsync(String(req.body?.text || "")));
+});
 
 app.get("/music/spotify/status", (req: Request, res: Response) => {
   const origin = `${req.protocol}://${req.get("host") || `localhost:${PORT}`}`;
@@ -2226,7 +2336,7 @@ app.get("/music/spotify/auth-url", (_req: Request, res: Response) =>
   res.json({ ok: false, error: "Use the Media & Video Search hub or Spotify web links directly." }),
 );
 app.post("/music/spotify/play", (_req: Request, res: Response) =>
-  res.json({ ok: false, error: "Play tracks directly inside the Smart Home & Media Hub." }),
+  res.json({ ok: false, error: "Play tracks directly inside the Movies & Music Hub." }),
 );
 app.post("/music/spotify/control", (_req: Request, res: Response) => res.json({ ok: true }));
 app.post("/music/spotify/disconnect", (_req: Request, res: Response) => {
@@ -2304,6 +2414,284 @@ app.post("/workspace/run-code", async (req: Request, res: Response) => {
   } finally {
     await fs.unlink(tmpFile).catch(() => undefined);
   }
+});
+
+/* ---------------- File & Note Galaxy + Brain Q&A ---------------- */
+
+app.get("/api/galaxy", async (_req: Request, res: Response) => {
+  const data = await loadJarvisData();
+  const graph = buildGalaxyGraph({
+    notes: data.notes,
+    memories: data.memories,
+    files: data.vaultFiles,
+  });
+  res.json({
+    graph,
+    vaultFiles: data.vaultFiles,
+    stats: {
+      notes: data.notes.length,
+      memories: data.memories.length,
+      files: data.vaultFiles.length,
+      totalNodes: graph.nodes.length,
+      edges: graph.edges.length,
+    },
+  });
+});
+
+app.post("/api/galaxy/files", async (req: Request, res: Response) => {
+  const name = String(req.body?.name || "untitled.bin").trim();
+  const mimeType = String(req.body?.mimeType || "application/octet-stream").trim();
+  const sizeBytes = Number(req.body?.sizeBytes || 0);
+  const textPreview = String(req.body?.textPreview || "").slice(0, 12000);
+  const dataUrl = typeof req.body?.dataUrl === "string" && req.body.dataUrl.length < 4_500_000 ? req.body.dataUrl : undefined;
+  const tags = Array.isArray(req.body?.tags) ? req.body.tags.map(String).filter(Boolean) : [];
+  const data = await loadJarvisData();
+  const entry = {
+    id: newId("file"),
+    name,
+    mimeType,
+    sizeBytes,
+    category: classifyFileCategory(name, mimeType),
+    tags,
+    textPreview,
+    dataUrl,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  data.vaultFiles.unshift(entry);
+  if (data.vaultFiles.length > 60) data.vaultFiles = data.vaultFiles.slice(0, 60);
+  await saveJarvisData(data);
+  res.json({ ok: true, file: entry, nodeId: `file:${entry.id}` });
+});
+
+app.delete("/api/galaxy/files/:id", async (req: Request, res: Response) => {
+  const data = await loadJarvisData();
+  data.vaultFiles = data.vaultFiles.filter((f) => f.id !== req.params.id);
+  await saveJarvisData(data);
+  res.json({ ok: true });
+});
+
+app.post("/api/galaxy/remember", async (req: Request, res: Response) => {
+  const text = String(req.body?.text || "").trim();
+  if (!text) {
+    res.status(400).json({ detail: "text is required" });
+    return;
+  }
+  const intent = extractRememberIntent(`remember that ${text}`) || {
+    title: text.split(/\s+/).slice(0, 6).join(" "),
+    body: text,
+    tags: ["live-recall"],
+  };
+  const data = await loadJarvisData();
+  const note = {
+    id: newId("note"),
+    title: intent.title,
+    body: intent.body,
+    tags: Array.isArray(req.body?.tags) ? req.body.tags.map(String) : intent.tags,
+    updatedAt: Date.now(),
+  };
+  data.notes.unshift(note);
+  await saveJarvisData(data);
+  const graph = buildGalaxyGraph({ notes: data.notes, memories: data.memories, files: data.vaultFiles });
+  res.json({ ok: true, note, nodeId: `note:${note.id}`, graph });
+});
+
+app.post("/api/galaxy/ask", async (req: Request, res: Response) => {
+  const question = String(req.body?.question || "").trim();
+  const data = await loadJarvisData();
+  const graph = buildGalaxyGraph({
+    notes: data.notes,
+    memories: data.memories,
+    files: data.vaultFiles,
+  });
+  const brain = queryGalaxyBrain(graph, question);
+
+  let answer = "";
+  if (brain.matches.length === 0) {
+    answer = question
+      ? "I found no matching note, memory, or file in your Knowledge Galaxy for that query, sir. Use Remember to add a new star node."
+      : "Ask a question about any note, memory, or uploaded file.";
+  } else {
+    const context = brain.matches
+      .slice(0, 5)
+      .map((m) => `[${m.node.kind.toUpperCase()}: ${m.node.title}]\n${m.node.excerpt}`)
+      .join("\n\n");
+    if (isGeminiConfigured()) {
+      let streamed = "";
+      await runGeminiTurn(
+        `Answer concisely using ONLY these Knowledge Galaxy sources. Cite source titles inline.\n\nSOURCES:\n${context}\n\nQUESTION: ${question}`,
+        [],
+        LIGHT_GEMINI_MODEL,
+        (evt) => {
+          if (evt.type === "token") streamed += String(evt.content || "");
+        },
+        { rawMode: true },
+      );
+      answer = streamed.trim();
+    }
+    if (!answer) {
+      answer = `Found ${brain.matches.length} source(s), led by "${brain.matches[0].node.title}": ${brain.matches[0].node.excerpt}`;
+    }
+  }
+
+  res.json({
+    ok: true,
+    answer,
+    cameraAction: brain.cameraAction,
+    focusNodeId: brain.focusNodeId,
+    litNodeIds: brain.litNodeIds,
+    neighborNodeIds: brain.neighborNodeIds,
+    sources: brain.matches.map((m) => ({
+      id: m.node.id,
+      title: m.node.title,
+      kind: m.node.kind,
+      score: Number(m.score.toFixed(2)),
+    })),
+  });
+});
+
+/* ---------------- WB Reminders & Timers ---------------- */
+
+app.get("/api/utilities", async (_req: Request, res: Response) => {
+  const data = await loadJarvisData();
+  res.json({ wbReminders: data.wbReminders, timers: data.timers });
+});
+
+app.post("/api/utilities/reminders", async (req: Request, res: Response) => {
+  const title = String(req.body?.title || "").trim();
+  if (!title) {
+    res.status(400).json({ detail: "title is required" });
+    return;
+  }
+  const data = await loadJarvisData();
+  const item = {
+    id: newId("rem"),
+    title,
+    notes: typeof req.body?.notes === "string" ? req.body.notes : undefined,
+    dueAt: Number(req.body?.dueAt || Date.now() + 900_000),
+    priority: (req.body?.priority === "urgent" ? "urgent" : req.body?.priority === "low" ? "low" : "normal") as "low" | "normal" | "urgent",
+    status: "pending" as const,
+    createdAt: Date.now(),
+  };
+  data.wbReminders.unshift(item);
+  await saveJarvisData(data);
+  res.json({ ok: true, item, items: data.wbReminders });
+});
+
+app.patch("/api/utilities/reminders/:id", async (req: Request, res: Response) => {
+  const data = await loadJarvisData();
+  const item = data.wbReminders.find((r) => r.id === req.params.id);
+  if (!item) {
+    res.status(404).json({ detail: "reminder not found" });
+    return;
+  }
+  if (typeof req.body?.status === "string") item.status = req.body.status as typeof item.status;
+  if (typeof req.body?.dueAt === "number") item.dueAt = req.body.dueAt;
+  if (typeof req.body?.title === "string") item.title = req.body.title;
+  await saveJarvisData(data);
+  res.json({ ok: true, item, items: data.wbReminders });
+});
+
+app.delete("/api/utilities/reminders/:id", async (req: Request, res: Response) => {
+  const data = await loadJarvisData();
+  data.wbReminders = data.wbReminders.filter((r) => r.id !== req.params.id);
+  await saveJarvisData(data);
+  res.json({ ok: true, items: data.wbReminders });
+});
+
+app.post("/api/utilities/timers", async (req: Request, res: Response) => {
+  const data = await loadJarvisData();
+  if (Array.isArray(req.body?.timers)) {
+    data.timers = req.body.timers;
+    await saveJarvisData(data);
+    res.json({ ok: true, timers: data.timers });
+    return;
+  }
+  res.status(400).json({ detail: "timers array required" });
+});
+
+/* ---------------- Sealed Workshop Vision-to-3D, Finish, Part Edit & Cost Receipt ---------------- */
+
+app.post("/api/workshop/vision", async (req: Request, res: Response) => {
+  const imageBase64 = String(req.body?.imageBase64 || "");
+  const mimeType = String(req.body?.mimeType || "image/png");
+  const hint = String(req.body?.hint || "");
+  if (!imageBase64) {
+    res.status(400).json({ detail: "imageBase64 is required" });
+    return;
+  }
+  const result = await analyzeWorkshopImageWithGemini(imageBase64, mimeType, hint);
+  if (result.ok && result.code) {
+    const saved = saveArtifact("three", result.title || "Vision 3D Build", result.code);
+    res.json({ ...result, artifact: toPublicArtifact(saved) });
+    return;
+  }
+  res.json(result);
+});
+
+app.post("/api/workshop/finish", async (req: Request, res: Response) => {
+  const imageDataUrl = String(req.body?.imageDataUrl || "");
+  const mode = req.body?.mode === "miniature" ? "miniature" : "photograph";
+  const title = String(req.body?.title || "Workshop Assembly");
+  const exploded = Boolean(req.body?.exploded);
+  if (!imageDataUrl) {
+    res.status(400).json({ detail: "imageDataUrl is required" });
+    return;
+  }
+  const result = await generateWorkshopFinishWithGemini({ imageDataUrl, mode, title, exploded });
+  res.json(result);
+});
+
+app.post("/api/workshop/part-edit", async (req: Request, res: Response) => {
+  const artifactId = String(req.body?.artifactId || "");
+  const partName = String(req.body?.partName || "").trim();
+  const instruction = String(req.body?.instruction || "").trim();
+  const art = state.artifacts.find((a) => a.id === artifactId);
+  if (!art || !partName || !instruction) {
+    res.status(400).json({ detail: "artifactId, partName, and instruction are required" });
+    return;
+  }
+  if (!isGeminiConfigured()) {
+    res.json({ ok: false, error: "Gemini API key required for surgical part edit." });
+    return;
+  }
+  let generated = "";
+  await runGeminiTurn(
+    `Update ONLY part "${partName}" inside this Three.js Workshop script per request: "${instruction}".\nReturn ONLY the JavaScript statements for part "${partName}" (no imports, no markdown fences, using W.* and JARVIS.*).\n\nFULL CODE CONTEXT:\n${art.content}`,
+    [],
+    DEFAULT_GEMINI_MODEL,
+    (evt) => {
+      if (evt.type === "token") generated += String(evt.content || "");
+    },
+    { rawMode: true },
+  );
+  const cleanPart = generated
+    .replace(/^```[\w-]*\s*\n?/gm, "")
+    .replace(/\n?```$/gm, "")
+    .trim();
+  if (!cleanPart) {
+    res.json({ ok: false, error: "Model produced empty replacement." });
+    return;
+  }
+  const nextContent = replaceWorkshopPart(art.content, partName, cleanPart, `Edited: ${instruction.slice(0, 40)}`);
+  const updated = saveArtifact(art.kind, art.title, nextContent, art.id);
+  res.json({ ok: true, artifact: toPublicArtifact(updated) });
+});
+
+app.get("/api/workshop/receipt", async (_req: Request, res: Response) => {
+  const data = await loadJarvisData();
+  res.json({
+    summary: summarizeCostReceipt(data.costLog),
+    entries: data.costLog.slice(0, 25),
+  });
+});
+
+app.get("/workshop-stage", (_req: Request, res: Response) => {
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none';",
+  );
+  res.type("html").send("<!doctype html><html><body style='margin:0;background:#0a0a12;color:#94a3b8;font-family:sans-serif;display:grid;place-items:center;height:100vh'>JARVIS Sealed Workshop CSP Stage</body></html>");
 });
 
 /* ------------------------------------------------------------------ HTTP + WebSockets + Vite */
@@ -2394,6 +2782,7 @@ chatWss.on("connection", (ws: WebSocket) => {
     repair?: { artifactId: string; error: string },
     sessionId = "default",
     clientHistory?: Array<{ role: string; content: string }>,
+    attachments?: Array<{ name: string; mimeType: string; kind?: string; dataBase64?: string; textContent?: string }>,
   ) => {
     activeTurn = true;
     const history = getHistoryForSession(sessionId, clientHistory);
@@ -2402,7 +2791,7 @@ chatWss.on("connection", (ws: WebSocket) => {
 
     try {
       if (!repair) {
-        const action = runDeterministicAction(content);
+        const action = await runDeterministicActionAsync(content);
         if (action.handled) {
           if (action.stopSpeaking) send({ type: "stop_speaking" }, sessionId);
           if (action.data) send({ type: "action", data: action.data }, sessionId);
@@ -2462,7 +2851,7 @@ chatWss.on("connection", (ws: WebSocket) => {
           }
           send(evt, sessionId);
         },
-        { rawMode: buffered },
+        { rawMode: buffered, attachments },
       );
 
       if (workspaceReq && rawReply) {
@@ -2550,9 +2939,36 @@ chatWss.on("connection", (ws: WebSocket) => {
     const clientHistory = Array.isArray(data.history)
       ? (data.history as Array<{ role: string; content: string }>)
       : undefined;
+    const attachments = Array.isArray(data.attachments)
+      ? (data.attachments as Array<{ name: string; mimeType: string; kind?: string; dataBase64?: string; textContent?: string }>)
+      : undefined;
     send({ type: "thinking", status: true }, sessionId);
-    void runTurn(content, modelOverride, undefined, sessionId, clientHistory);
+    void runTurn(content, modelOverride, undefined, sessionId, clientHistory, attachments);
   });
+});
+
+app.post("/api/video/ai-analyze-edit", async (req: Request, res: Response) => {
+  const body = (req.body || {}) as {
+    instruction?: string;
+    clips?: Array<{
+      index: number;
+      name: string;
+      duration: number;
+      trimStart: number;
+      trimEnd: number;
+      speed: number;
+      mediaType?: string;
+    }>;
+    frames?: Array<{ clipIndex: number; timestampSec: number; imageBase64: string }>;
+    beatInfo?: { bpm: number; beats: number[]; musicName?: string };
+  };
+  const result = await analyzeAndPlanVideoEditWithGemini({
+    instruction: String(body.instruction || ""),
+    clips: Array.isArray(body.clips) ? body.clips : [],
+    frames: Array.isArray(body.frames) ? body.frames : [],
+    beatInfo: body.beatInfo || { bpm: 120, beats: [] },
+  });
+  res.json(result);
 });
 
 async function start() {

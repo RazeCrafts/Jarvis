@@ -7,27 +7,11 @@ import type {
   CalendarEvent,
   PersonalMemory,
   PersonalNote,
-  SecurityLogEntry,
 } from "../src/lib/memoryAndCalendar";
 
-export interface SmartDevice {
-  id: string;
-  name: string;
-  room: string;
-  type: "light" | "climate" | "lock" | "camera" | "speaker" | "sensor";
-  on: boolean;
-  level?: number;
-  targetTemp?: number;
-  currentTemp?: number;
-  statusText: string;
-}
-
-export interface SmartScene {
-  id: string;
-  name: string;
-  description: string;
-  actions: Array<{ deviceId: string; on: boolean; level?: number; targetTemp?: number }>;
-}
+import type { WorkspaceVaultFile } from "../src/lib/fileGalaxy";
+import type { CountdownTimer, WbReminder } from "../src/lib/timersAndReminders";
+import type { ApiCostEntry } from "../src/lib/workshopProtocol";
 
 export interface GatewayMessageEntry {
   id: string;
@@ -85,15 +69,11 @@ export interface PersistedJarvisData {
   memories: PersonalMemory[];
   notes: PersonalNote[];
   calendar: CalendarEvent[];
-  smartHome: {
-    homeAssistantUrl: string;
-    homeAssistantConnected: boolean;
-    watchdogArmed: boolean;
-    devices: SmartDevice[];
-    scenes: SmartScene[];
-  };
+  vaultFiles: WorkspaceVaultFile[];
+  wbReminders: WbReminder[];
+  timers: CountdownTimer[];
+  costLog: ApiCostEntry[];
   automations: AutomationRule[];
-  securityLog: SecurityLogEntry[];
   gatewayMessages: GatewayMessageEntry[];
   cronJobs: PersistedCronJob[];
   plugins: NormalizedPlugin[];
@@ -115,25 +95,25 @@ function createDefaultData(): PersistedJarvisData {
       assistantName: "JARVIS",
       userTitle: "Sir",
       witLevel: "balanced",
-      conciseness: "detailed",
+      conciseness: "brief",
       proactiveMemory: true,
       liveGraphsByDefault: true,
       systemDirectives:
-        "You are JARVIS, a refined, hyper-competent British personal butler and engineering confidant. Anticipate needs, explain complex systems clearly with live visual diagrams when helpful, and remember personal details the user shares.",
+        "You are JARVIS, a refined, hyper-competent British personal butler and autonomous engineering workstation. Keep Butler Mode replies crisp and conversational; expand deeply in Full Text Agent Mode.",
     },
     hud: {
-      themeId: "arc-titanium",
+      themeId: "golden-hologram",
       customAccent: "",
       borderRadius: 14,
       compactMode: false,
-      visibleWidgets: ["core", "schedule", "memories", "smarthome", "media"],
+      visibleWidgets: ["core", "schedule", "memories", "media"],
     },
     memories: [
       {
         id: "mem-1",
         category: "preference",
         title: "HUD Visual Preference",
-        content: "Prefers an open Iron Man inspired HUD with customizable themes and live telemetry charts.",
+        content: "Prefers the Golden Holographic Core aesthetic with clean data charts and Butler Mode voice brevity.",
         pinned: true,
         createdAt: now - 86400000,
         updatedAt: now - 3600000,
@@ -141,8 +121,8 @@ function createDefaultData(): PersistedJarvisData {
       {
         id: "mem-2",
         category: "project",
-        title: "JARVIS Unified Command Suite",
-        content: "Building a personal assistant capable of Workshop 3D design, video editing, smart home monitoring, and universal plugins.",
+        title: "JARVIS Autonomous Workstation",
+        content: "Desktop-first cross-platform engineering assistant with Hermes plugins, coding self-healing, and media search.",
         pinned: true,
         createdAt: now - 43200000,
         updatedAt: now - 1800000,
@@ -181,77 +161,60 @@ function createDefaultData(): PersistedJarvisData {
         completed: false,
       },
     ],
-    smartHome: {
-      homeAssistantUrl: "",
-      homeAssistantConnected: false,
-      watchdogArmed: false,
-      devices: [
-        { id: "dev-lr-lights", name: "Living Room Main Lights", room: "Living Room", type: "light", on: true, level: 72, statusText: "72% Warm White" },
-        { id: "dev-lab-lights", name: "Workshop Bench Strip", room: "Workshop", type: "light", on: true, level: 90, statusText: "90% Daylight" },
-        { id: "dev-climate", name: "Main Residence Thermostat", room: "Hallway", type: "climate", on: true, targetTemp: 70, currentTemp: 71, statusText: "Cooling to 70°F" },
-        { id: "dev-front-lock", name: "Front Entry Smart Lock", room: "Entry", type: "lock", on: true, statusText: "Locked" },
-        { id: "dev-cam-porch", name: "Front Porch Camera", room: "Exterior", type: "camera", on: true, statusText: "Motion Clear" },
-        { id: "dev-speaker", name: "Studio Acoustic Array", room: "Living Room", type: "speaker", on: false, level: 45, statusText: "Standby · 45%" },
-      ],
-      scenes: [
-        {
-          id: "scene-workshop",
-          name: "Workshop Focus",
-          description: "Bright task lighting in Workshop, quiet living room.",
-          actions: [
-            { deviceId: "dev-lab-lights", on: true, level: 100 },
-            { deviceId: "dev-lr-lights", on: true, level: 30 },
-            { deviceId: "dev-speaker", on: true, level: 35 },
-          ],
-        },
-        {
-          id: "scene-movie",
-          name: "Movie Night",
-          description: "Dim ambient lights and enable Living Room speakers.",
-          actions: [
-            { deviceId: "dev-lr-lights", on: true, level: 15 },
-            { deviceId: "dev-lab-lights", on: false, level: 0 },
-            { deviceId: "dev-speaker", on: true, level: 65 },
-          ],
-        },
-        {
-          id: "scene-away",
-          name: "Away Secure",
-          description: "Lights off, front door locked, cameras active.",
-          actions: [
-            { deviceId: "dev-lr-lights", on: false, level: 0 },
-            { deviceId: "dev-lab-lights", on: false, level: 0 },
-            { deviceId: "dev-front-lock", on: true },
-            { deviceId: "dev-cam-porch", on: true },
-          ],
-        },
-      ],
-    },
+    vaultFiles: [
+      {
+        id: "file-spec-1",
+        name: "orbital-truss-specs.md",
+        mimeType: "text/markdown",
+        sizeBytes: 1840,
+        category: "document",
+        tags: ["aerospace", "workshop", "cad"],
+        textPreview:
+          "# Orbital Truss Assembly\nPrimary frame: brushed titanium.\nSolar wing hinges linked to [[Workshop & Automation Ideas]].\nMass budget target: 4.2 kg.",
+        createdAt: now - 5400000,
+        updatedAt: now - 5400000,
+      },
+      {
+        id: "file-telemetry-1",
+        name: "acoustic-eq-preset.json",
+        mimeType: "application/json",
+        sizeBytes: 620,
+        category: "data",
+        tags: ["audio", "vlc", "preset"],
+        textPreview: '{"profile":"Studio Warm","preampPercent":120,"bands":[3,1,0,2,4]}',
+        createdAt: now - 3200000,
+        updatedAt: now - 3200000,
+      },
+    ],
+    wbReminders: [
+      {
+        id: "rem-1",
+        title: "Review Workshop Exploded Print tolerances",
+        notes: "Check 0.2mm clearance on rotor mounts before exporting STL.",
+        dueAt: now + 3600_000,
+        priority: "normal",
+        status: "pending",
+        createdAt: now - 600_000,
+      },
+    ],
+    timers: [],
+    costLog: [],
     automations: [
       {
-        id: "auto-perimeter",
-        name: "Perimeter Lock Watchdog",
-        triggerType: "lock_unlocked_away",
-        actionSummary: "Raise Watchdog security alert if any entry lock opens while armed",
-        targetSceneId: "scene-away",
+        id: "auto-morning",
+        name: "Morning Schedule & Inbox Digest",
+        triggerType: "morning_brief",
+        actionSummary: "Compile schedule highlights and top unread priorities",
+        targetChannel: "hud",
         enabled: true,
       },
       {
         id: "auto-meeting",
-        name: "Meeting Focus Dimmer",
+        name: "Meeting Focus Prep",
         triggerType: "meeting_approaching",
-        actionSummary: "Notify HUD & switch lighting to Workshop Focus 30m before events",
-        targetSceneId: "scene-workshop",
+        actionSummary: "Notify HUD with calendar notes 30m before events",
+        targetChannel: "hud",
         enabled: true,
-      },
-    ],
-    securityLog: [
-      {
-        id: "sec-init",
-        severity: "info",
-        source: "Perimeter Monitor",
-        message: "All residence locks and exterior camera sensors initialized nominally.",
-        ts: now - 1200000,
       },
     ],
     gatewayMessages: [],
@@ -435,26 +398,32 @@ export async function loadJarvisData(): Promise<PersistedJarvisData> {
         mergedPlugins.push(defPlugin);
       }
     }
+    const cleanedWidgets = Array.isArray(parsed.hud?.visibleWidgets)
+      ? parsed.hud.visibleWidgets.filter((w) => w !== "smarthome")
+      : defaults.hud.visibleWidgets;
     cachedData = {
       ...defaults,
       ...parsed,
       activeProfileName: parsed.activeProfileName || defaults.activeProfileName,
       persona: { ...defaults.persona, ...(parsed.persona || {}) },
-      hud: { ...defaults.hud, ...(parsed.hud || {}) },
-      smartHome: {
-        ...defaults.smartHome,
-        ...(parsed.smartHome || {}),
-        watchdogArmed: Boolean(parsed.smartHome?.watchdogArmed),
-        devices: parsed.smartHome?.devices?.length ? parsed.smartHome.devices : defaults.smartHome.devices,
-        scenes: parsed.smartHome?.scenes?.length ? parsed.smartHome.scenes : defaults.smartHome.scenes,
+      hud: {
+        ...defaults.hud,
+        ...(parsed.hud || {}),
+        themeId: parsed.hud?.themeId && parsed.hud.themeId !== "arc-titanium" ? parsed.hud.themeId : defaults.hud.themeId,
+        visibleWidgets: cleanedWidgets,
       },
-      automations: Array.isArray(parsed.automations) ? parsed.automations : defaults.automations,
-      securityLog: Array.isArray(parsed.securityLog) ? parsed.securityLog : defaults.securityLog,
+      automations: Array.isArray(parsed.automations)
+        ? parsed.automations.filter((a) => a.triggerType !== ("lock_unlocked_away" as string) && a.triggerType !== ("motion_detected" as string))
+        : defaults.automations,
       gatewayMessages: Array.isArray(parsed.gatewayMessages) ? parsed.gatewayMessages : defaults.gatewayMessages,
       cronJobs: Array.isArray(parsed.cronJobs) ? parsed.cronJobs : defaults.cronJobs,
       memories: Array.isArray(parsed.memories) ? parsed.memories : defaults.memories,
       notes: Array.isArray(parsed.notes) ? parsed.notes : defaults.notes,
       calendar: Array.isArray(parsed.calendar) ? parsed.calendar : defaults.calendar,
+      vaultFiles: Array.isArray(parsed.vaultFiles) ? parsed.vaultFiles : defaults.vaultFiles,
+      wbReminders: Array.isArray(parsed.wbReminders) ? parsed.wbReminders : defaults.wbReminders,
+      timers: Array.isArray(parsed.timers) ? parsed.timers : defaults.timers,
+      costLog: Array.isArray(parsed.costLog) ? parsed.costLog : defaults.costLog,
       plugins: mergedPlugins,
       accountConnectors:
         Array.isArray(parsed.accountConnectors) && parsed.accountConnectors.length
@@ -480,7 +449,7 @@ export async function saveJarvisData(next: PersistedJarvisData): Promise<void> {
 
 export function exportShareBundle(data: PersistedJarvisData) {
   return {
-    bundleFormat: "jarvis-profile-v1",
+    bundleFormat: "jarvis-profile-v2",
     profileName: data.activeProfileName,
     exportedAt: new Date().toISOString(),
     persona: data.persona,
@@ -488,11 +457,9 @@ export function exportShareBundle(data: PersistedJarvisData) {
     notes: data.notes,
     calendar: data.calendar,
     memories: data.memories,
-    scenes: data.smartHome.scenes,
     automations: data.automations,
     plugins: data.plugins.map((p) => ({
       ...p,
-      // Keep non-secret manifests portable for friends
       webhookUrl: p.webhookUrl || undefined,
     })),
   };
@@ -530,9 +497,6 @@ export async function importShareBundle(bundle: Record<string, unknown>): Promis
       if (p?.id && p?.name) merged.set(p.id, p);
     }
     next.plugins = Array.from(merged.values());
-  }
-  if (Array.isArray(bundle.scenes)) {
-    next.smartHome = { ...current.smartHome, scenes: bundle.scenes as SmartScene[] };
   }
 
   await saveJarvisData(next);

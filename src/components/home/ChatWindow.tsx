@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { motion } from "framer-motion";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Film, FolderOpen, Music, Play } from "lucide-react";
 import Prism from "prismjs";
 import "prismjs/components/prism-typescript";
 import "prismjs/components/prism-javascript";
@@ -10,8 +10,10 @@ import "prismjs/components/prism-json";
 import "prismjs/components/prism-css";
 import "prismjs/components/prism-markup";
 import "prismjs/themes/prism-tomorrow.css";
+import { agentApi } from "@/lib/agentApi";
 import { cn } from "@/lib/cn";
-import { useAgentStore, useChatStore, useHudStore } from "@/store";
+import type { MediaLaunchBundle } from "@/lib/mediaIntent";
+import { useAgentStore, useChatStore, useHudStore, usePlayerStore } from "@/store";
 import type { ChatMessage } from "@/types";
 import { LiveVisualRenderer } from "@/components/visuals/LiveVisualRenderer";
 
@@ -58,6 +60,104 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
       <pre className="!bg-transparent overflow-x-auto p-3">
         <code className="!bg-transparent font-mono text-xs leading-relaxed" dangerouslySetInnerHTML={{ __html: html }} />
       </pre>
+    </div>
+  );
+}
+
+function MediaCard({ media }: { media: MediaLaunchBundle }) {
+  const openPlayerItem = usePlayerStore((s) => s.openItem);
+  const localPickerRef = useRef<HTMLInputElement | null>(null);
+
+  const playInSite = () => {
+    openPlayerItem({
+      id: media.id,
+      title: media.title,
+      kind: media.kind,
+      source: media.localDataUrl ? "local" : "online",
+      watchUrl: media.watchUrl,
+      embedUrl: media.embedUrl,
+      localSrc: media.localDataUrl,
+      mimeType: media.mimeType,
+      channel: media.channel,
+      targets: media.targets,
+    });
+  };
+
+  const handleLocalFile = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const f = files[0];
+    const isAudio = f.type.startsWith("audio/") || /\.(mp3|wav|ogg|m4a|flac|aac)$/i.test(f.name);
+    openPlayerItem({
+      id: `local-${f.name}-${Date.now()}`,
+      title: f.name,
+      kind: isAudio ? "audio" : "video",
+      source: "local",
+      localSrc: URL.createObjectURL(f),
+      mimeType: f.type || (isAudio ? "audio/mpeg" : "video/mp4"),
+      targets: media.targets,
+    });
+  };
+
+  return (
+    <div className="mt-2.5 space-y-2 rounded-xl border border-border bg-elevated/70 p-3 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          {media.kind === "song" ? (
+            <Music size={14} className="shrink-0 text-accent" />
+          ) : (
+            <Film size={14} className="shrink-0 text-accent" />
+          )}
+          <div className="min-w-0">
+            <p className="truncate font-semibold text-fg">{media.title}</p>
+            <p className="font-mono text-[10px] text-fg-muted">
+              {media.channel || "Online Search"} · {media.kind.toUpperCase()}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={playInSite}
+            className="inline-flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1 text-[11px] font-medium text-background"
+          >
+            <Play size={11} /> Play on Site
+          </button>
+          <input
+            ref={localPickerRef}
+            type="file"
+            accept="video/*,audio/*,.mp4,.mkv,.webm,.mp3,.wav,.flac,.m4a,.ogg"
+            className="hidden"
+            onChange={(e) => handleLocalFile(e.target.files)}
+          />
+          <button
+            type="button"
+            onClick={() => localPickerRef.current?.click()}
+            className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface px-2.5 py-1 text-[11px] text-fg hover:border-accent"
+          >
+            <FolderOpen size={11} /> Play Local File
+          </button>
+        </div>
+      </div>
+
+      {media.targets.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 border-t border-border/70 pt-2">
+          {media.targets.map((t) => (
+            <a
+              key={t.id}
+              href={t.protocolUri || t.webUrl}
+              target={t.protocolUri ? undefined : "_blank"}
+              rel={t.protocolUri ? undefined : "noreferrer"}
+              onClick={() => {
+                if (t.bridgeAppName) void agentApi.launchApp(t.bridgeAppName).catch(() => undefined);
+              }}
+              className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface px-2 py-1 text-[11px] text-fg transition-colors hover:border-accent hover:text-accent"
+            >
+              {t.label} <ExternalLink size={10} />
+            </a>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -116,6 +216,8 @@ function Bubble({ message }: { message: ChatMessage }) {
 
         {message.visuals &&
           message.visuals.map((vis) => <LiveVisualRenderer key={vis.id} visual={vis} />)}
+
+        {message.mediaCard && <MediaCard media={message.mediaCard} />}
 
         {message.citations && message.citations.length > 0 && (
           <div className="mt-2.5 flex flex-wrap gap-2 border-t border-border pt-2 text-[11px] text-fg-muted">
@@ -181,9 +283,9 @@ export function ChatWindow({ onQuickPrompt }: { onQuickPrompt?: (prompt: string)
 
   if (messages.length === 0 && !isThinking) {
     const starters = [
+      "Find Night of the Living Dead movie online and play it",
+      "Play Blinding Lights on Spotify",
       "Explain quantum computing with a live comparison chart",
-      "Search YouTube for space engineering documentaries",
-      "Remember that I prefer concise engineering summaries",
       "Build a 3D orbital satellite inside Workshop",
     ];
     return (
@@ -191,7 +293,7 @@ export function ChatWindow({ onQuickPrompt }: { onQuickPrompt?: (prompt: string)
         <div className="hud-panel max-w-xl px-6 py-4">
           <p className="font-display text-lg font-semibold tracking-tight text-fg">{greeting(userTitle)}</p>
           <p className="mt-1 text-xs text-fg-muted">
-            {assistantName} systems nominal. Ask a question, generate live visuals, control your home, or inspect your screen.
+            {assistantName} systems nominal. Write and run code, orchestrate Hermes skills, play media, or inspect your screen.
           </p>
           {onQuickPrompt && (
             <div className="mt-3 grid grid-cols-1 gap-1.5 sm:grid-cols-2">

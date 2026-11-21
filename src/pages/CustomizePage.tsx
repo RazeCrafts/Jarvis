@@ -23,11 +23,10 @@ const WIDGET_LABELS: Record<HudWidgetId, string> = {
   core: "3D JARVIS Core Visualizer",
   schedule: "Upcoming Schedule & Routines",
   memories: "Pinned Personal Memories",
-  smarthome: "Smart Home Quick Controls",
-  media: "Media & Video Queue",
+  media: "Movies & Music Queue",
 };
 
-const ALL_WIDGETS: HudWidgetId[] = ["core", "schedule", "memories", "smarthome", "media"];
+const ALL_WIDGETS: HudWidgetId[] = ["core", "schedule", "memories", "media"];
 
 export default function CustomizePage() {
   const themeId = useHudStore((s) => s.themeId);

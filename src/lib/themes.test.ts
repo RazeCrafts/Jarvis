@@ -2,10 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { JARVIS_THEMES, getThemeById } from "./themes";
 
-test("provides exactly 40 distinct themes across dark and daylight categories", () => {
-  assert.equal(JARVIS_THEMES.length, 40);
+test("provides 41 distinct themes across dark and daylight categories including Golden Holographic Core", () => {
+  assert.equal(JARVIS_THEMES.length, 41);
   const ids = new Set(JARVIS_THEMES.map((t) => t.id));
-  assert.equal(ids.size, 40);
+  assert.equal(ids.size, 41);
+  assert.equal(JARVIS_THEMES[0].id, "golden-hologram");
   const darkCount = JARVIS_THEMES.filter((t) => t.isDark).length;
   const lightCount = JARVIS_THEMES.filter((t) => !t.isDark).length;
   assert.ok(darkCount >= 25);

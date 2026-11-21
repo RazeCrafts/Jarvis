@@ -1,4 +1,5 @@
 import { Minimize2, Moon, ScanSearch, Sun } from "lucide-react";
+import { QuickUtilitiesBar } from "@/components/layout/QuickUtilitiesBar";
 import { cn } from "@/lib/cn";
 import { useAgentStore, useHudStore, useUiStore } from "@/store";
 import { getThemeById } from "@/lib/themes";
@@ -84,6 +85,7 @@ export function TitleBar({ className }: { className?: string }) {
           />
           {isConnected ? "Online" : "Reconnecting"}
         </span>
+        <QuickUtilitiesBar />
         <button
           type="button"
           onClick={() => setCircleToSearchOpen(true)}

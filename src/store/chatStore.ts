@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { ChatMessage, ChatRole, ChatSession, LiveVisualSpec, WebCitation } from "@/types";
+import type { MediaLaunchBundle } from "@/lib/mediaIntent";
 import {
   createChatSession,
   DEFAULT_SESSION_TITLE,
@@ -26,6 +27,7 @@ interface ChatState {
   appendToMessage: (id: string, chunk: string, sessionId?: string) => void;
   attachVisualToMessage: (id: string, visual: LiveVisualSpec, sessionId?: string) => void;
   attachCitationsToMessage: (id: string, citations: WebCitation[], sessionId?: string) => void;
+  attachMediaCardToMessage: (id: string, mediaCard: MediaLaunchBundle, sessionId?: string) => void;
   finishMessage: (id: string, sessionId?: string) => void;
   clearMessages: (sessionId?: string) => void;
   setListening: (listening: boolean) => void;
@@ -176,6 +178,13 @@ export const useChatStore = create<ChatState>()(
         set((s) =>
           updateSessionMessages(s, sessionId, (msgs) => ({
             messages: msgs.map((m) => (m.id === id ? { ...m, citations } : m)),
+          })),
+        ),
+
+      attachMediaCardToMessage: (id, mediaCard, sessionId) =>
+        set((s) =>
+          updateSessionMessages(s, sessionId, (msgs) => ({
+            messages: msgs.map((m) => (m.id === id ? { ...m, mediaCard } : m)),
           })),
         ),
 

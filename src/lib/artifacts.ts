@@ -47,14 +47,14 @@ export function detectKind(lang: string | undefined, content: string): {
   }
   if (l === "md" || l === "markdown") return { kind: "markdown", language: "markdown" };
   if (l === "js" || l === "javascript" || l === "ts" || l === "typescript") {
-    if (/\bthree\b|\bTHREE\b|\bJARVIS\./.test(content)) {
+    if (/\bthree\b|\bTHREE\b|\bJARVIS\.|\bW\./.test(content)) {
       return { kind: "three", language: "javascript" };
     }
     return { kind: "code", language: l.startsWith("t") ? "typescript" : "javascript" };
   }
   if (l === "py" || l === "python") return { kind: "code", language: "python" };
   if (l) return { kind: "code", language: l };
-  if (/\bJARVIS\.|\bTHREE\b/.test(content)) return { kind: "three", language: "javascript" };
+  if (/\bJARVIS\.|\bTHREE\b|\bW\./.test(content)) return { kind: "three", language: "javascript" };
   return { kind: "code", language: undefined };
 }
 

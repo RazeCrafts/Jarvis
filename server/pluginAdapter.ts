@@ -12,7 +12,7 @@ export interface CatalogEntry {
   id: string;
   name: string;
   version: string;
-  category: "Auth & Providers" | "Skills" | "Smart Home" | "Productivity" | "Media";
+  category: "Auth & Providers" | "Skills" | "Coding" | "Productivity" | "Media";
   description: string;
   sourceKind: "plugin_yaml" | "skill_md";
   requiresBridge: boolean;
@@ -189,29 +189,31 @@ auth_mode: oauth_device
 requires_bridge: false`,
   },
   {
-    id: "home-assistant-automations",
-    name: "Home Assistant Live Bridge",
+    id: "hermes-autonomous-coder",
+    name: "Autonomous Coding & Self-Healing",
     version: "1.3.0",
-    category: "Smart Home",
-    description: "Control lights, thermostats, locks, cameras, and voice routines through Home Assistant REST & WebSocket APIs.",
+    category: "Coding",
+    description: "Inspect repository files, execute build/test scripts, parse tracebacks, patch root causes, and re-verify cleanly.",
     sourceKind: "skill_md",
     requiresBridge: false,
-    upstreamUrl: "https://agentskills.io",
+    upstreamUrl: "https://github.com/NousResearch/hermes-official-plugins",
     rawManifest: `---
-name: Home Assistant Live Bridge
+name: Autonomous Coding & Self-Healing
 version: 1.3.0
-description: Voice and HUD control for smart home lights, climate, scenes, and security sensors.
+description: Local workspace reading/editing, terminal build checks, and traceback-driven self-healing loop.
 triggers:
-  - turn on
-  - turn off
-  - thermostat
-  - movie night
+  - fix build
+  - refactor
+  - run tests
+  - debug error
 tools:
-  - control_smart_home
+  - read_file
+  - edit_file
+  - run_shell
 ---
 
-# Home Assistant Live Bridge
-Translate natural-language room and scene commands into device state transitions and confirm clearly.`,
+# Autonomous Coding & Self-Healing
+Always read target files before patching, verify changes via tests or compiler output, and isolate destructive edits safely.`,
   },
   {
     id: "deep-web-research-charts",
